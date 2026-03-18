@@ -1,0 +1,75 @@
+services:
+
+  # ── MCP server – exposes MongoDB as tools the agent can call ─────────────
+  mcp-server:
+    build: ./mcp-server
+    container_name: matai-mcp
+    environment:
+      MONGO_URL: mongodb://host.docker.internal:27017
+      MONGO_DB: txp
+      MCP_PORT: 8001
+    ports:
+      - "8001:8001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Linux bridge to host
+    networks:
+      - matai-net
+
+  # ── Stats tool – Python microservice wrapping scipy/statsmodels ──────────
+  stats-tool:
+    build: ./stats-tool
+    container_name: matai-stats
+    environment:
+      STATS_PORT: 8002
+    ports:
+      - "8002:8002"
+    networks:
+      - matai-net
+
+  # ── Agent – Gemini orchestrator, calls tools ─────────────────────────────
+  agent:
+    build: ./agent
+    container_name: matai-agent
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      MCP_SERVER_URL: http://mcp-server:8001
+      STATS_TOOL_URL: http://stats-tool:8002
+      AGENT_PORT: 8003
+    ports:
+      - "8003:8003"
+    depends_on:
+      - mcp-server
+      - stats-tool
+    networks:
+      - matai-net
+
+  # ── Backend – FastAPI, bridges frontend ↔ agent ──────────────────────────
+  backend:
+    build: ./backend
+    container_name: matai-backend
+    environment:
+      AGENT_URL: http://agent:8003
+      BACKEND_PORT: 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - agent
+    networks:
+      - matai-net
+
+  # ── Frontend – React chat UI ──────────────────────────────────────────────
+  frontend:
+    build: ./frontend
+    container_name: matai-frontend
+    environment:
+      VITE_BACKEND_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - matai-net
+
+networks:
+  matai-net:
+    driver: bridge

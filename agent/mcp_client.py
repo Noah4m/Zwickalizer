@@ -5,43 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from google.genai import types
-
 
 def _normalize_tool_name(server_name: str, tool_name: str) -> str:
     raw = f"{server_name}_{tool_name}"
     return "".join(ch if ch.isalnum() else "_" for ch in raw)
-
-
-def _schema_type(value: str | None) -> str | None:
-    if value is None:
-        return None
-    return value.upper()
-
-
-def _json_schema_to_genai_schema(schema: dict[str, Any]) -> types.Schema:
-    properties = schema.get("properties", {})
-    items = schema.get("items")
-
-    kwargs: dict[str, Any] = {}
-    schema_type = _schema_type(schema.get("type"))
-    if schema_type is not None:
-        kwargs["type"] = schema_type
-    if "description" in schema:
-        kwargs["description"] = schema["description"]
-    if "enum" in schema:
-        kwargs["enum"] = schema["enum"]
-    if "required" in schema:
-        kwargs["required"] = schema["required"]
-    if properties:
-        kwargs["properties"] = {
-            key: _json_schema_to_genai_schema(value)
-            for key, value in properties.items()
-        }
-    if isinstance(items, dict):
-        kwargs["items"] = _json_schema_to_genai_schema(items)
-
-    return types.Schema(**kwargs)
 
 
 def _read_message(stream) -> dict[str, Any]:
@@ -177,18 +144,18 @@ class MCPToolbox:
         for session in self.sessions.values():
             session.stop()
 
-    def google_tools(self) -> list[Any]:
-        declarations = [
-            types.FunctionDeclaration(
-                name=tool.public_name,
-                description=tool.description,
-                parameters=tool.input_schema,
-            )
+    def openai_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.public_name,
+                    "description": tool.description,
+                    "parameters": tool.input_schema,
+                },
+            }
             for tool in self.tools.values()
         ]
-        if not declarations:
-            return []
-        return [types.Tool(function_declarations=declarations)]
 
     def call(self, public_name: str, arguments: dict[str, Any]) -> str:
         tool = self.tools[public_name]

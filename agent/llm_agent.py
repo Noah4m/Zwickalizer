@@ -1,9 +1,8 @@
 import json
 from typing import Any, List
 
-from google import genai
-from google.genai.errors import ClientError
-from google.genai import types
+import openai
+from openai import OpenAI
 
 from mcp_client import MCPToolbox
 
@@ -42,92 +41,59 @@ def format_history(history: List[dict]) -> str:
 
 
 def extract_text(response: Any) -> str:
-    text = getattr(response, "text", None)
-    if text:
-        return text.strip()
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        return ""
 
-    candidates = getattr(response, "candidates", None) or []
-    for candidate in candidates:
-        content = getattr(candidate, "content", None)
-        parts = getattr(content, "parts", None) or []
-        chunks: list[str] = []
-        for part in parts:
-            value = getattr(part, "text", None)
-            if value:
-                chunks.append(value)
-        if chunks:
-            return " ".join(chunks).strip()
+    message = getattr(choices[0], "message", None)
+    if message is None:
+        return ""
 
-    return ""
+    content = getattr(message, "content", None)
+    return content.strip() if isinstance(content, str) else ""
 
 
-def extract_function_calls(response: Any) -> list[Any]:
-    direct_calls = getattr(response, "function_calls", None)
-    if direct_calls:
-        return list(direct_calls)
-
-    calls: list[Any] = []
-    candidates = getattr(response, "candidates", None) or []
-    for candidate in candidates:
-        content = getattr(candidate, "content", None)
-        parts = getattr(content, "parts", None) or []
-        for part in parts:
-            function_call = getattr(part, "function_call", None)
-            if function_call is not None:
-                calls.append(function_call)
-    return calls
-
-
-def response_content_for_history(response: Any) -> Any:
-    candidates = getattr(response, "candidates", None) or []
-    for candidate in candidates:
-        content = getattr(candidate, "content", None)
-        if content is not None:
-            return content
-
-    text = extract_text(response)
-    return types.Content(role="model", parts=[types.Part.from_text(text=text or "")])
-
-
-def function_call_arguments(function_call: Any) -> dict[str, Any]:
-    arguments = getattr(function_call, "args", None)
+def function_call_arguments(arguments: Any) -> dict[str, Any]:
     if isinstance(arguments, dict):
         return arguments
 
     if isinstance(arguments, str):
         try:
             loaded = json.loads(arguments)
-            if isinstance(loaded, dict):
-                return loaded
         except json.JSONDecodeError:
             return {}
-
-    arguments = getattr(function_call, "arguments", None)
-    if isinstance(arguments, dict):
-        return arguments
+        return loaded if isinstance(loaded, dict) else {}
 
     return {}
 
 
-def user_message_content(text: str) -> types.Content:
-    return types.Content(role="user", parts=[types.Part.from_text(text=text)])
-
-
 def format_model_error(exc: Exception) -> str:
     message = str(exc)
-    if isinstance(exc, ClientError) and getattr(exc, "status_code", None) == 429:
+    if isinstance(exc, openai.RateLimitError):
         return (
-            "The Gemini API quota is currently exhausted for this project, so I cannot generate a reply right now. "
+            "The OpenAI API quota is currently exhausted for this project, so I cannot generate a reply right now. "
             "Please wait and try again later, or switch to a different model/key with available quota."
         )
+    if isinstance(exc, openai.AuthenticationError):
+        return "The OpenAI API key was rejected. Check the key in your `.env` file and try again."
     return f"Model error: {message}"
 
 
 class MCPEnabledChatAgent:
     def __init__(self, api_key: str, model: str, mcp_server_root: str):
-        self.client = genai.Client(api_key=api_key)
+        self.client = OpenAI(api_key=api_key)
         self.model = model
         self.mcp_server_root = mcp_server_root
+
+    def _completion(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None):
+        request: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.2,
+        }
+        if tools:
+            request["tools"] = tools
+        return self.client.chat.completions.create(**request)
 
     def answer(self, message: str, role: str | None, history: List[dict]) -> str:
         prompt = f"""
@@ -144,7 +110,7 @@ Latest user question:
 {message}
 """.strip()
 
-        base_contents: list[Any] = [user_message_content(prompt)]
+        base_messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
         fallback_instruction = (
             "\n\nTool status:\n"
             "If external tools are unavailable, answer general questions normally. "
@@ -153,56 +119,51 @@ Latest user question:
 
         try:
             with MCPToolbox(self.mcp_server_root) as toolbox:
-                config = types.GenerateContentConfig(
-                    tools=toolbox.google_tools(),
-                    temperature=0.2,
-                )
-                contents: list[Any] = list(base_contents)
+                tools = toolbox.openai_tools()
+                messages: list[dict[str, Any]] = list(base_messages)
 
                 for _ in range(6):
-                    response = self.client.models.generate_content(
-                        model=self.model,
-                        contents=contents,
-                        config=config,
-                    )
+                    response = self._completion(messages, tools)
+                    choice = response.choices[0] if response.choices else None
+                    assistant_message = getattr(choice, "message", None)
 
-                    function_calls = extract_function_calls(response)
-                    if not function_calls:
+                    if assistant_message is None:
+                        return "I could not generate a response."
+
+                    tool_calls = list(getattr(assistant_message, "tool_calls", None) or [])
+                    assistant_payload = assistant_message.model_dump(exclude_none=True)
+                    assistant_payload.setdefault("role", "assistant")
+                    messages.append(assistant_payload)
+
+                    if not tool_calls:
                         return extract_text(response) or "I could not generate a response."
 
-                    contents.append(response_content_for_history(response))
-
-                    tool_parts: list[Any] = []
-                    for function_call in function_calls:
-                        name = getattr(function_call, "name", "")
-                        arguments = function_call_arguments(function_call)
+                    for tool_call in tool_calls:
+                        function = getattr(tool_call, "function", None)
+                        name = getattr(function, "name", "")
+                        arguments = function_call_arguments(getattr(function, "arguments", None))
                         try:
                             result = toolbox.call(name, arguments)
-                            response_payload = {"result": result}
+                            response_payload = json.dumps({"result": result})
                         except Exception as exc:
-                            response_payload = {"error": str(exc)}
+                            response_payload = json.dumps({"error": str(exc)})
 
-                        tool_parts.append(
-                            types.Part.from_function_response(
-                                name=name,
-                                response=response_payload,
-                            )
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": response_payload,
+                            }
                         )
 
-                    contents.append(types.Content(role="tool", parts=tool_parts))
-
                 return "I could not complete the tool workflow."
-        except ClientError as exc:
+        except openai.APIError as exc:
             return format_model_error(exc)
         except Exception:
             try:
-                response = self.client.models.generate_content(
-                    model=self.model,
-                    contents=[
-                        user_message_content(prompt + fallback_instruction),
-                    ],
-                    config=types.GenerateContentConfig(temperature=0.2),
+                response = self._completion(
+                    [{"role": "user", "content": prompt + fallback_instruction}],
                 )
                 return extract_text(response) or "I could not generate a response."
-            except ClientError as exc:
+            except openai.APIError as exc:
                 return format_model_error(exc)

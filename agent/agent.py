@@ -2,16 +2,27 @@ import os
 import traceback
 from typing import List, Literal
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from llm_agent import MCPEnabledChatAgent
 
 
-app = FastAPI(title="MatAI Agent", version="0.2.0")
+load_dotenv()
+
+
+def _openai_api_key() -> str:
+    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("OPEN_API_KEY")
+    if api_key:
+        return api_key
+    raise RuntimeError("OPENAI_API_KEY is not set.")
+
+
+app = FastAPI(title="MatAI Agent", version="0.3.0")
 chat_agent = MCPEnabledChatAgent(
-    api_key=os.environ["GEMINI_API_KEY"],
-    model=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+    api_key=_openai_api_key(),
+    model=os.environ.get("OPENAI_MODEL", "gpt-4.1-mini"),
     mcp_server_root=os.environ.get("MCP_SERVER_ROOT", "/mcp-server"),
 )
 

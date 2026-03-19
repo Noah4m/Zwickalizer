@@ -33,13 +33,10 @@ services:
     build: ./frontend
     container_name: matai-frontend
     command: npm run dev -- --host 0.0.0.0 --port 3000
-    environment:
-      VITE_BACKEND_URL: http://localhost:8000
+    # environment:
+    #   VITE_BACKEND_URL: http://localhost:8000
     ports:
       - "3000:3000"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
     depends_on:
       - backend
     networks:

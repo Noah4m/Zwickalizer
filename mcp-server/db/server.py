@@ -254,7 +254,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         cursor = (
             tests_col.find(filters, META_PROJ)
             .sort("TestParametersFlat.date", -1)
-            .limit(100)
+            .limit(5)
         )
         results = [format_test(d) for d in cursor]
         return ok({"tests": results})

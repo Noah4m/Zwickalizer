@@ -1,5 +1,6 @@
 # FastAPI entrypoint: exposes HTTP routes and delegates chat work to the LLM agent.
 import json
+import logging
 import os
 import traceback
 from typing import List, Literal
@@ -10,6 +11,9 @@ from pydantic import BaseModel, Field
 
 from chat_agent import MCPEnabledChatAgent
 from mcp_client import MCPToolbox
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 load_dotenv()
@@ -25,7 +29,7 @@ def _openai_api_key() -> str:
 app = FastAPI(title="MatAI Agent", version="0.3.0")
 chat_agent = MCPEnabledChatAgent(
     api_key=_openai_api_key(),
-    model=os.environ.get("OPENAI_MODEL", "gpt-4.1-mini"),
+    model=os.environ.get("OPENAI_MODEL", "gpt-5-mini"),
     mcp_server_root=os.environ.get("MCP_SERVER_ROOT", "/mcp-server"),
 )
 
@@ -45,19 +49,20 @@ def inspect_mcp() -> dict:
             "tools": tool_names,
         }
 
-        if "db_list_collections" not in toolbox.tools:
+        if "db_list_customers" not in toolbox.tools:
             payload["db"] = {
                 "status": "skipped",
-                "reason": "db_list_collections tool is not registered.",
+                "reason": "db_list_customers tool is not registered.",
             }
             return payload
 
-        raw_collections = toolbox.call("db_list_collections", {})
-        collections = json.loads(raw_collections)
+        raw_customers = toolbox.call("db_list_customers", {})
+        customers_payload = json.loads(raw_customers)
+        customers = customers_payload.get("customers") if isinstance(customers_payload, dict) else None
         payload["db"] = {
             "status": "ok",
-            "collections_count": len(collections) if isinstance(collections, list) else None,
-            "sample_collections": collections[:5] if isinstance(collections, list) else [],
+            "customers_count": len(customers) if isinstance(customers, list) else None,
+            "sample_customers": customers[:5] if isinstance(customers, list) else [],
         }
         return payload
 
@@ -65,19 +70,23 @@ def inspect_mcp() -> dict:
 @app.post("/chat")
 async def chat(req: ChatRequest):
     try:
+        logger.info("Agent received chat request role=%s message=%s", req.role, req.message[:200])
         answer = chat_agent.answer(
             message=req.message,
             role=req.role,
             history=req.history,
         )
+        logger.info("Agent returning chat response")
         return {"answer": answer}
     except Exception as exc:
+        logger.exception("Agent chat request failed")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/health")
 async def health(response: Response):
+    logger.info("Agent health check requested")
     payload = {
         "status": "ok",
         "model": chat_agent.model,

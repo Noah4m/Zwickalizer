@@ -3,6 +3,7 @@ Backend — thin API layer.
 Receives chat requests from the frontend, forwards to agent, returns response.
 This is where you'd add auth, rate-limiting, session management later.
 """
+import logging
 import os
 from fastapi import FastAPI
 from fastapi import HTTPException, Response
@@ -10,6 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List
 import httpx
+
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="MatAI Backend", version="0.1.0")
 
@@ -36,20 +39,32 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
+    logger.info(
+        "Backend received chat request role=%s message=%s",
+        req.role,
+        req.message[:200],
+    )
     payload = {
         "message": req.message,
         "role": req.role,
         "history": [m.model_dump() for m in req.history],
     }
     async with httpx.AsyncClient(timeout=120) as client:
-        r = await client.post(f"{AGENT_URL}/chat", json=payload)
+        try:
+            r = await client.post(f"{AGENT_URL}/chat", json=payload)
+        except Exception:
+            logger.exception("Backend failed to reach agent at %s/chat", AGENT_URL)
+            raise
         if r.is_error:
+            logger.error("Agent returned HTTP %s: %s", r.status_code, r.text[:500])
             raise HTTPException(status_code=r.status_code, detail=r.text)
+        logger.info("Backend returning chat response with HTTP %s", r.status_code)
         return r.json()
 
 
 @app.get("/api/health")
 async def health(response: Response):
+    logger.info("Backend health check requested")
     async with httpx.AsyncClient(timeout=5) as client:
         overall_status = "ok"
         services = {}

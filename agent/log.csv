@@ -21,3 +21,7 @@ timestamp_utc,event_type,details,status,message
 2026-03-19T09:56:10.030094+00:00,chat_response,"{""message"": ""11981"", ""history_length"": 5}",success,No matching tests found
 2026-03-19T09:59:06.474646+00:00,chat_request,"{""message"": ""test"", ""history_length"": 1}",started,Incoming chat request
 2026-03-19T09:59:06.966369+00:00,chat_response,"{""message"": ""test"", ""history_length"": 1}",success,No matching tests found
+2026-03-19T10:28:29.136911+00:00,chat_request,"{""message"": ""Give me a summary for Test 3"", ""history_length"": 0}",started,Incoming chat request
+2026-03-19T10:30:21.059901+00:00,chat_request,"{""message"": ""Give me a summary for Test 3"", ""history_length"": 0}",started,Incoming chat request
+2026-03-19T10:34:00.354664+00:00,chat_request,"{""message"": ""Give me a summary for Test 3"", ""history_length"": 0}",started,Incoming chat request
+2026-03-19T10:37:44.534602+00:00,chat_request,"{""message"": ""Give me a summary for Test 3"", ""history_length"": 0}",started,Incoming chat request

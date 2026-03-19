@@ -11,12 +11,10 @@ import { ChatMessage } from "@/types/chat";
 import {
   createEmptyThread,
   deriveAnalysisData,
-  getSimulatedResponse,
   getThreadTitle,
   type ChatThread,
 } from "@/components/chat/chat-data";
 
-const BACKEND = import.meta.env.VITE_BACKEND_URL || "";
 const initialThread = createEmptyThread("engineer");
 
 function sortThreads(threads: ChatThread[]) {
@@ -100,55 +98,33 @@ export default function ChatInterface() {
     setLoading(true);
 
     try {
-      console.log("Backend URL:", BACKEND);
-      if (BACKEND) {
-        console.log("Sending request to backend with history:", [...history, userMsg]);
-        const res = await fetch(`${BACKEND}/api/chat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            message: text,
-            role,
-            history: history.map((message) => ({ role: message.role, content: message.content })),
-          }),
-        });
-
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-
-        patchThread(activeThread.id, (thread) => ({
-          ...thread,
+      const res = await fetch(`/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: text,
           role,
-          messages: [
-            ...thread.messages,
-            {
-              role: "assistant",
-              content: data.answer,
-              toolCalls: data.tool_calls || [],
-              timestamp: new Date(),
-            },
-          ],
-          updatedAt: Date.now(),
-        }));
-      } else {
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        const simulated = getSimulatedResponse(text, role);
+          history: history.map((message) => ({ role: message.role, content: message.content })),
+        }),
+      });
 
-        patchThread(activeThread.id, (thread) => ({
-          ...thread,
-          role,
-          messages: [
-            ...thread.messages,
-            {
-              role: "assistant",
-              content: simulated.content,
-              toolCalls: simulated.toolCalls,
-              timestamp: new Date(),
-            },
-          ],
-          updatedAt: Date.now(),
-        }));
-      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      patchThread(activeThread.id, (thread) => ({
+        ...thread,
+        role,
+        messages: [
+          ...thread.messages,
+          {
+            role: "assistant",
+            content: data.answer,
+            toolCalls: data.tool_calls || [],
+            timestamp: new Date(),
+          },
+        ],
+        updatedAt: Date.now(),
+      }));
     } catch (error) {
       patchThread(activeThread.id, (thread) => ({
         ...thread,

@@ -31,7 +31,14 @@ from pymongo.collection import Collection
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
+from test_metadata import (
+    FIELD_ALIASES,
+    equality_filter,
+    exact_date_filter,
+    normalize_test_document,
+)
 from value_lookup import (
+    build_test_id_candidates,
     extract_value_arrays,
     find_test_by_id,
     find_value_column_by_name,
@@ -170,31 +177,6 @@ META_PROJ = {
     "valueColumns.name": 1,
     "valueColumns.unitTableId": 1,
 }
-
-
-def format_test(d: dict) -> dict:
-    fp = d.get("TestParametersFlat", {})
-    return {
-        "testId": str(d["_id"]),
-        "name": d.get("name"),
-        "date": fp.get("date").isoformat() if fp.get("date") else None,
-        "material": fp.get("MATERIAL"),
-        "testType": fp.get("TYPE_OF_TESTING_STR"),
-        "machine": fp.get("MACHINE_DATA"),
-        "tester": fp.get("TESTER"),
-        "customer": fp.get("CUSTOMER"),
-        "standard": fp.get("STANDARD"),
-        "specimenWidth": fp.get("SPECIMEN_WIDTH"),
-        "diameter": fp.get("DIAMETER"),
-        "machine_type_str": fp.get("MACHINE_TYPE_STR"),
-        "notes": fp.get("NOTES"),
-        "testSpeed": fp.get("TEST_SPEED"),
-        "availableColumns": [
-            c["name"] for c in d.get("valueColumns", []) if "name" in c
-        ],
-    }
-
-
 def ok(data: dict) -> list[types.TextContent]:
     return [
         types.TextContent(type="text", text=json.dumps(data, indent=2, default=str))
@@ -376,51 +358,49 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return ok({"customers": vals})
 
     if name == "find_tests":
-        filters = {}
-
-        if "id" in arguments:
-
-            try:
-                filters["_id"] = ObjectId(arguments["id"])
-            except Exception:
-                return ok(
-                    {"error": f"Invalid test id format: {arguments['id']}", "tests": []}
-                )
-
+        filters: list[dict] = []
+        if isinstance(arguments.get("id"), str) and arguments["id"].strip():
+            id_candidates = build_test_id_candidates(arguments["id"])
+            if len(id_candidates) == 1:
+                filters.append({"_id": id_candidates[0]})
+            else:
+                filters.append({"_id": {"$in": id_candidates}})
         if "testType" in arguments:
-            filters["TestParametersFlat.TYPE_OF_TESTING_STR"] = arguments["testType"]
+            filters.append(equality_filter(FIELD_ALIASES["testType"], arguments["testType"]))
         if "customer" in arguments:
-            filters["TestParametersFlat.CUSTOMER"] = arguments["customer"]
+            filters.append(equality_filter(FIELD_ALIASES["customer"], arguments["customer"]))
         if "material" in arguments:
-            filters["TestParametersFlat.MATERIAL"] = arguments["material"]
+            filters.append(equality_filter(FIELD_ALIASES["material"], arguments["material"]))
         if "tester" in arguments:
-            filters["TestParametersFlat.TESTER"] = arguments["tester"]
+            filters.append(equality_filter(FIELD_ALIASES["tester"], arguments["tester"]))
         if "machine_nr" in arguments:
-            filters["TestParametersFlat.MACHINE_DATA"] = arguments["machine_nr"]
-        if "name" in arguments:
-            filters["name"] = arguments["name"]
+            filters.append(equality_filter(FIELD_ALIASES["machineNr"], arguments["machine_nr"]))
+        if isinstance(arguments.get("name"), str) and arguments["name"].strip():
+            filters.append({"name": arguments["name"]})
+        if isinstance(arguments.get("date"), str) and arguments["date"].strip():
+            filters.append(exact_date_filter(arguments["date"]))
+        else:
+            date_filter = build_test_date_filter(
+                arguments.get("date"),
+                arguments.get("date_from"),
+                arguments.get("date_to"),
+            )
+            if date_filter:
+                filters.append({"TestParametersFlat.date": date_filter})
 
-        date_filter = build_test_date_filter(
-            arguments.get("date"),
-            arguments.get("date_from"),
-            arguments.get("date_to"),
-        )
-        if date_filter:
-            filters["TestParametersFlat.date"] = date_filter
-
-        limit = min(int(arguments.get("limit", 10)), 50)
+        limit = max(1, min(int(arguments.get("limit", 10)), 50))
 
         cursor = (
-            tests_col.find(filters, META_PROJ)
+            tests_col.find({"$and": filters} if filters else {}, META_PROJ)
             .sort("TestParametersFlat.date", -1)
             .limit(limit)
         )
-        results = [format_test(d) for d in cursor]
+        results = [normalize_test_document(d) for d in cursor]
         return ok(
             {
                 "tests": results,
                 "count": len(results),
-                "filters_applied": list(filters.keys()),
+                "filters_applied": [list(clause.keys())[0] for clause in filters],
             }
         )
 

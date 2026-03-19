@@ -24,6 +24,14 @@ export interface OutlierRecord {
   metrics: OutlierMetric[];
 }
 
+export interface OutlierApiResponse {
+  outliers: OutlierRecord[];
+  sampleSize?: number;
+  numericFieldsChecked?: string[];
+  source?: string;
+  reason?: string;
+}
+
 export const sampleOutliers: OutlierRecord[] = [
   {
     id: "OUT-104",

@@ -86,6 +86,21 @@ async def health(response: Response):
     return {"status": overall_status, "services": services}
 
 
+@app.get("/api/outliers")
+async def outliers(limit: int = 6):
+    logger.info("Backend received outlier review request limit=%s", limit)
+    async with httpx.AsyncClient(timeout=120) as client:
+        try:
+            r = await client.get(f"{AGENT_URL}/outliers", params={"limit": limit})
+        except Exception:
+            logger.exception("Backend failed to reach agent at %s/outliers", AGENT_URL)
+            raise
+        if r.is_error:
+            logger.error("Agent returned HTTP %s for outliers: %s", r.status_code, r.text[:500])
+            raise HTTPException(status_code=r.status_code, detail=r.text)
+        return r.json()
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("BACKEND_PORT", 8000)))

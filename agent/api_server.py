@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from chat_agent import MCPEnabledChatAgent
 from mcp_client import MCPToolbox
+from outlier_service import fetch_review_outliers
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -105,6 +106,16 @@ async def health(response: Response):
         payload["mcp"] = {"status": "error", "error": str(exc)}
 
     return payload
+
+
+@app.get("/outliers")
+async def outliers(limit: int = 6):
+    try:
+        logger.info("Agent outlier review request received limit=%s", limit)
+        return fetch_review_outliers(chat_agent.mcp_server_root, limit=limit)
+    except Exception as exc:
+        logger.exception("Agent outlier review request failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 if __name__ == "__main__":

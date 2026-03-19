@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowRight, CheckCircle2, Mail, ShieldAlert, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   sampleOutliers,
+  type OutlierApiResponse,
   type OutlierRecord,
 } from "@/components/outliers/outlier-data";
 
@@ -27,6 +28,48 @@ export default function OutlierWorkbench() {
   const [pendingOutliers, setPendingOutliers] = useState<OutlierRecord[]>(sampleOutliers);
   const [selectedId, setSelectedId] = useState<string>(sampleOutliers[0]?.id ?? "");
   const [resolved, setResolved] = useState<ResolvedOutlier[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadOutliers() {
+      try {
+        setLoading(true);
+        setLoadError(null);
+        const res = await fetch("/api/outliers?limit=6");
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+
+        const data = (await res.json()) as OutlierApiResponse;
+        if (cancelled) return;
+
+        if (Array.isArray(data.outliers) && data.outliers.length > 0) {
+          setPendingOutliers(data.outliers);
+          setSelectedId(data.outliers[0].id);
+        } else if (Array.isArray(data.outliers)) {
+          setPendingOutliers([]);
+          setSelectedId("");
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setPendingOutliers(sampleOutliers);
+        setSelectedId(sampleOutliers[0]?.id ?? "");
+        setLoadError(error instanceof Error ? error.message : "Failed to load outliers");
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadOutliers();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const selectedOutlier = useMemo(
     () => pendingOutliers.find((outlier) => outlier.id === selectedId) ?? pendingOutliers[0] ?? null,
@@ -72,7 +115,11 @@ export default function OutlierWorkbench() {
             <p className="font-mono text-xs uppercase tracking-[0.22em] text-muted-foreground">Queue</p>
           </div>
           <div className="max-h-full space-y-3 overflow-y-auto p-4">
-            {pendingOutliers.length === 0 ? (
+            {loading ? (
+              <div className="rounded-[24px] border border-dashed border-border/60 bg-background/40 p-4 text-sm text-muted-foreground">
+                Loading outliers...
+              </div>
+            ) : pendingOutliers.length === 0 ? (
               <div className="rounded-[24px] border border-dashed border-border/60 bg-background/40 p-4 text-sm text-muted-foreground">
                 No pending outliers.
               </div>
@@ -232,6 +279,11 @@ export default function OutlierWorkbench() {
             <p className="font-mono text-xs uppercase tracking-[0.22em] text-muted-foreground">Session log</p>
           </div>
           <div className="max-h-full space-y-3 overflow-y-auto p-4">
+            {loadError && (
+              <div className="rounded-[24px] border border-border/60 bg-background/55 p-4 text-sm text-muted-foreground">
+                Live data unavailable. Showing sample queue.
+              </div>
+            )}
             {resolved.length === 0 ? (
               <div className="rounded-[24px] border border-dashed border-border/60 bg-background/40 p-4 text-sm text-muted-foreground">
                 No actions yet.

@@ -229,6 +229,13 @@ class MCPToolbox:
 
     def _tool_description_for_model(self, tool: MCPToolSpec) -> str:
         description = tool.description
+        if tool.public_name == "db_get_test_value_columns":
+            description += (
+                " In this chat UI, if you set include_values=true, the returned value columns can be plotted for the user "
+                "in the right-side analysis panel. The raw values are not passed back into model context after the call; "
+                "instead you receive a compact summary with per-series min/max and counts. Use include_values=true when "
+                "the user asks to visualize, inspect, or plot the returned curves."
+            )
         if tool.public_name == "db_get_test_value_arrays":
             description += (
                 " In this chat UI, calling this tool automatically shows the user a line plot of the returned arrays. "

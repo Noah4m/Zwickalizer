@@ -35,6 +35,28 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+const MAX_PLOT_POINTS = 1500;
+
+function sampleIndexes(length: number): number[] {
+  if (length <= 0) {
+    return [];
+  }
+
+  if (length <= MAX_PLOT_POINTS) {
+    return Array.from({ length }, (_, index) => index);
+  }
+
+  const step = Math.ceil(length / MAX_PLOT_POINTS);
+  const indexes: number[] = [];
+  for (let index = 0; index < length; index += step) {
+    indexes.push(index);
+  }
+  if (indexes[indexes.length - 1] !== length - 1) {
+    indexes.push(length - 1);
+  }
+  return indexes;
+}
+
 function buildValueArrayAnalysis(message: ChatMessage): AnalysisData[] | null {
   const toolCall = [...(message.toolCalls ?? [])]
     .reverse()
@@ -60,8 +82,9 @@ function buildValueArrayAnalysis(message: ChatMessage): AnalysisData[] | null {
     (max, values) => Math.max(max, values.length),
     0,
   );
+  const sampledIndexes = sampleIndexes(longestSeries);
 
-  const points = Array.from({ length: longestSeries }, (_, index) => {
+  const points = sampledIndexes.map((index) => {
     const point: Record<string, string | number | null> = { index };
     plottedArrays.forEach((values, seriesIndex) => {
       point[`series_${seriesIndex + 1}`] = values[index] ?? null;
@@ -95,7 +118,10 @@ function buildValueArrayAnalysis(message: ChatMessage): AnalysisData[] | null {
     {
       type: "chart",
       title: "Test value arrays",
-      subtitle: `Test ${testId}. Each returned value array is shown as a separate line over sample index.`,
+      subtitle:
+        sampledIndexes.length === longestSeries
+          ? `Test ${testId}. Each returned value array is shown as a separate line over sample index.`
+          : `Test ${testId}. The frontend deterministically samples ${sampledIndexes.length} of ${longestSeries} points for plotting while preserving the raw array for the tool result.`,
       data: {
         kind: "line",
         xKey: "index",
@@ -113,6 +139,115 @@ function buildValueArrayAnalysis(message: ChatMessage): AnalysisData[] | null {
             label,
           };
         }),
+      },
+    },
+  ];
+}
+
+function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null {
+  const toolCall = [...(message.toolCalls ?? [])]
+    .reverse()
+    .find((entry) => entry.name === "db_get_test_value_columns");
+
+  if (!toolCall || typeof toolCall.result !== "object" || toolCall.result === null) {
+    return null;
+  }
+
+  const result = toolCall.result as Record<string, unknown>;
+  const rawValueColumns = result.valueColumns;
+  if (!Array.isArray(rawValueColumns)) {
+    return null;
+  }
+  const seriesSummaries = Array.isArray(result.seriesSummaries)
+    ? result.seriesSummaries
+    : [];
+
+  const plottedColumns = rawValueColumns
+    .map((entry) => (typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : null))
+    .filter((entry): entry is Record<string, unknown> => entry !== null)
+    .map((entry, index) => {
+      const summary = seriesSummaries[index];
+      const summaryLabel =
+        summary && typeof summary === "object" && typeof summary.label === "string"
+          ? summary.label
+          : null;
+
+      return {
+      label:
+        typeof summaryLabel === "string" && summaryLabel.trim().length > 0
+          ? summaryLabel
+          : typeof entry.name === "string" && entry.name.trim().length > 0
+          ? entry.name
+          : typeof entry.childId === "string" && entry.childId.trim().length > 0
+            ? entry.childId
+            : "Value column",
+      values: Array.isArray(entry.values)
+        ? entry.values.map((value) => (isFiniteNumber(value) ? value : null))
+        : [],
+      unitTableId: typeof entry.unitTableId === "string" ? entry.unitTableId : undefined,
+      };
+    })
+    .filter((entry) => entry.values.length > 0);
+
+  if (plottedColumns.length === 0) {
+    return null;
+  }
+
+  const longestSeries = plottedColumns.reduce(
+    (max, column) => Math.max(max, column.values.length),
+    0,
+  );
+  const sampledIndexes = sampleIndexes(longestSeries);
+
+  const points = sampledIndexes.map((index) => {
+    const point: Record<string, string | number | null> = { index };
+    plottedColumns.forEach((column, seriesIndex) => {
+      point[`series_${seriesIndex + 1}`] = column.values[index] ?? null;
+    });
+    return point;
+  });
+
+  const strict = Boolean(result.strict ?? true);
+  const valuesLimit =
+    typeof result.valuesLimit === "number" ? result.valuesLimit : null;
+  const testId = typeof result.testId === "string" ? result.testId : "Unknown";
+  const sharedUnitTableId =
+    plottedColumns.length > 0 &&
+    plottedColumns.every((column) => column.unitTableId === plottedColumns[0].unitTableId)
+      ? plottedColumns[0].unitTableId
+      : undefined;
+
+  return [
+    {
+      type: "stats",
+      title: "Value column plot summary",
+      data: [
+        { label: "Series", value: String(plottedColumns.length), delta: "plotted" },
+        { label: "Longest line", value: String(longestSeries), delta: "points" },
+        { label: "Mode", value: strict ? "Strict" : "Loose", delta: "matching" },
+        {
+          label: "Limit",
+          value: valuesLimit === null ? "Full" : String(valuesLimit),
+          delta: valuesLimit === null ? "returned" : "per line",
+        },
+      ],
+    },
+    {
+      type: "chart",
+      title: "Test value columns",
+      subtitle:
+        sampledIndexes.length === longestSeries
+          ? `Test ${testId}. Each returned value column is shown as a separate line over sample index.`
+          : `Test ${testId}. The frontend deterministically samples ${sampledIndexes.length} of ${longestSeries} points for plotting while preserving the raw values in the tool result.`,
+      data: {
+        kind: "line",
+        xKey: "index",
+        yAxisLabel: sharedUnitTableId ?? "Value",
+        points,
+        series: plottedColumns.map((column, seriesIndex) => ({
+          key: `series_${seriesIndex + 1}`,
+          label: column.label,
+        })),
       },
     },
   ];
@@ -155,6 +290,11 @@ export function deriveAnalysisData(messages: ChatMessage[]): AnalysisData[] {
 
   if (!latestAssistantMessage) {
     return [];
+  }
+
+  const toolDerivedValueColumnsAnalysis = buildValueColumnsAnalysis(latestAssistantMessage);
+  if (toolDerivedValueColumnsAnalysis) {
+    return toolDerivedValueColumnsAnalysis;
   }
 
   const toolDerivedAnalysis = buildValueArrayAnalysis(latestAssistantMessage);

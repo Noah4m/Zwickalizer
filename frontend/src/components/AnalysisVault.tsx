@@ -95,10 +95,15 @@ function ChartSection({ title, subtitle, chart }: { title: string; subtitle?: st
           <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
           <XAxis
             dataKey={chart.xKey}
+            type={isBar ? "category" : "number"}
+            domain={isBar ? undefined : ["dataMin", "dataMax"]}
+            tickCount={isBar ? undefined : 6}
             tick={{ fill: mutedColor, fontSize: 11, fontFamily: "JetBrains Mono" }}
             minTickGap={24}
           />
           <YAxis
+            type="number"
+            domain={["auto", "auto"]}
             tick={{ fill: mutedColor, fontSize: 11, fontFamily: "JetBrains Mono" }}
             label={chart.yAxisLabel ? { value: chart.yAxisLabel, angle: -90, position: "insideLeft", fill: mutedColor, fontSize: 10 } : undefined}
           />

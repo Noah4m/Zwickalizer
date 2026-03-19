@@ -4,6 +4,59 @@ import { deriveAnalysisData } from "@/components/chat/chat-data";
 import type { ChatMessage } from "@/types/chat";
 
 describe("deriveAnalysisData", () => {
+  it("builds a deterministic line plot from db_get_test_value_columns tool results", () => {
+    const messages: ChatMessage[] = [
+      {
+        role: "user",
+        content: "plot the value columns",
+      },
+      {
+        role: "assistant",
+        content: "I plotted the returned value columns.",
+        toolCalls: [
+          {
+            name: "db_get_test_value_columns",
+            args: { test_id: "T-700", include_values: true },
+            result: {
+              testId: "T-700",
+              strict: true,
+              includeValues: true,
+              valuesLimit: null,
+              valueColumns: [
+                {
+                  name: "Force",
+                  values: [1, 2, 3],
+                },
+                {
+                  name: "Strain",
+                  values: [4, 5, 6],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ];
+
+    const analysis = deriveAnalysisData(messages);
+
+    expect(analysis).toHaveLength(2);
+    expect(analysis[0].type).toBe("stats");
+    expect(analysis[1].type).toBe("chart");
+
+    const chart = analysis[1].data;
+    expect("kind" in chart && chart.kind).toBe("line");
+    expect("series" in chart && chart.series).toEqual([
+      { key: "series_1", label: "Force" },
+      { key: "series_2", label: "Strain" },
+    ]);
+    expect("points" in chart && chart.points).toEqual([
+      { index: 0, series_1: 1, series_2: 4 },
+      { index: 1, series_1: 2, series_2: 5 },
+      { index: 2, series_1: 3, series_2: 6 },
+    ]);
+  });
+
   it("builds a deterministic line plot from db_get_test_value_arrays tool results", () => {
     const messages: ChatMessage[] = [
       {

@@ -232,14 +232,81 @@ class ChatAgentTests(unittest.TestCase):
         response = agent.respond("plot the value arrays for test T-200", "engineer", [])
 
         self.assertEqual(response.answer, final_answer)
-        self.assertEqual(len(response.analysis), 2)
-        self.assertEqual(response.analysis[1]["type"], "chart")
-        self.assertEqual(len(response.analysis[1]["data"]["series"]), 2)
-        self.assertEqual(response.analysis[1]["data"]["points"][2]["series_1"], None)
+        self.assertEqual(response.analysis, [])
         self.assertEqual(response.tool_calls[0]["result"]["plotShownToUser"], True)
         self.assertEqual(response.tool_calls[0]["result"]["valueArrays"][0][2], None)
         self.assertEqual(response.tool_calls[0]["result"]["seriesSummaries"][0]["min"], 0.0)
         self.assertEqual(response.tool_calls[0]["result"]["seriesSummaries"][1]["max"], 15.0)
+
+    def test_value_columns_tool_sends_only_summary_to_model_and_plot_values_to_client(self):
+        final_answer = "I plotted the returned force curves. The first series runs from 1 to 4 and the second from 2 to 5."
+        responses = [
+            FakeResponse(
+                FakeMessage(
+                    "Let me retrieve the value columns and plot them.",
+                    tool_calls=[
+                        FakeToolCall(
+                            "call_1",
+                            "db_get_test_value_columns",
+                            {"test_id": "T-300", "include_values": True, "values_limit": 4},
+                        )
+                    ],
+                )
+            ),
+            FakeResponse(FakeMessage(final_answer)),
+        ]
+        client = FakeClient(responses)
+        toolbox = FakeToolbox(
+            json.dumps(
+                {
+                    "testId": "T-300",
+                    "strict": True,
+                    "includeValues": True,
+                    "count": 2,
+                    "valuesLimit": 4,
+                    "valueColumns": [
+                        {
+                            "name": "Force",
+                            "childId": "{TABLE}.{COL-1}_Value",
+                            "sourceDocumentId": "doc-1",
+                            "values": [1, 4, float("nan"), 3],
+                        },
+                        {
+                            "name": "Force",
+                            "childId": "{TABLE}.{COL-2}_Value",
+                            "sourceDocumentId": "doc-2",
+                            "duplicate": True,
+                            "values": [2, 5, 4, 3],
+                        },
+                    ],
+                }
+            ),
+            tool_name="db_get_test_value_columns",
+            description="Return value columns for a test.",
+        )
+        agent = MCPEnabledChatAgent(
+            api_key="test-key",
+            model="test-model",
+            mcp_server_root="/tmp/mcp",
+            client=client,
+            toolbox_factory=lambda _: toolbox,
+        )
+
+        response = agent.respond("plot the value columns for test T-300", "engineer", [])
+
+        self.assertEqual(response.answer, final_answer)
+        self.assertTrue(response.tool_calls[0]["result"]["plotShownToUser"])
+        self.assertEqual(response.tool_calls[0]["result"]["valueColumns"][0]["values"][2], None)
+        self.assertEqual(response.tool_calls[0]["result"]["seriesSummaries"][0]["min"], 1.0)
+        self.assertEqual(response.tool_calls[0]["result"]["seriesSummaries"][1]["max"], 5.0)
+
+        tool_message = next(
+            message
+            for message in client.chat.completions.requests[1]["messages"]
+            if message["role"] == "tool"
+        )
+        self.assertIn('"seriesSummaries"', tool_message["content"])
+        self.assertNotIn('"values": [1, 4, null, 3]', tool_message["content"])
 
         second_request_messages = client.chat.completions.requests[1]["messages"]
         tool_message = next(message for message in second_request_messages if message["role"] == "tool")

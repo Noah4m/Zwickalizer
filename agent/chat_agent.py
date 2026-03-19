@@ -174,20 +174,6 @@ def _format_value(value: float | None) -> str:
     return f"{value:.6g}"
 
 
-def _series_palette(index: int) -> str:
-    palette = [
-        "primary",
-        "accent",
-        "#f59e0b",
-        "#10b981",
-        "#6366f1",
-        "#ef4444",
-        "#06b6d4",
-        "#8b5cf6",
-    ]
-    return palette[index % len(palette)]
-
-
 def summarize_value_arrays_tool(arguments: dict[str, Any], result: str) -> ToolExecutionResult:
     payload = tool_result_payload(result)
     parsed_result = payload.get("result")
@@ -221,55 +207,9 @@ def summarize_value_arrays_tool(arguments: dict[str, Any], result: str) -> ToolE
         plotted_arrays.append(plotted_values)
         longest_series = max(longest_series, len(values))
 
-    points: list[dict[str, Any]] = []
-    for point_index in range(longest_series):
-        point: dict[str, Any] = {"index": point_index}
-        for series_index, plotted_values in enumerate(plotted_arrays):
-            series_key = f"series_{series_index + 1}"
-            point[series_key] = plotted_values[point_index] if point_index < len(plotted_values) else None
-        points.append(point)
-
     test_id = parsed_result.get("testId") or arguments.get("test_id")
     strict = bool(parsed_result.get("strict", arguments.get("strict", True)))
     values_limit = parsed_result.get("valuesLimit", arguments.get("values_limit"))
-    stats_cards = [
-        {"label": "Series", "value": str(len(series_summaries)), "delta": "plotted"},
-        {"label": "Longest line", "value": str(longest_series), "delta": "points"},
-        {"label": "Mode", "value": "Strict" if strict else "Loose", "delta": "matching"},
-    ]
-    if values_limit is not None:
-        stats_cards.append({"label": "Limit", "value": str(values_limit), "delta": "per line"})
-    else:
-        stats_cards.append({"label": "Limit", "value": "Full", "delta": "returned"})
-
-    analysis = [
-        {
-            "type": "stats",
-            "title": "Value array plot summary",
-            "data": stats_cards,
-        },
-        {
-            "type": "chart",
-            "title": "Test value arrays",
-            "subtitle": (
-                f"Test {test_id}. Each returned value array is shown as a separate line over sample index."
-            ),
-            "data": {
-                "kind": "line",
-                "xKey": "index",
-                "yAxisLabel": "Value",
-                "points": points,
-                "series": [
-                    {
-                        "key": f"series_{series_index + 1}",
-                        "label": summary["label"],
-                        "color": _series_palette(series_index),
-                    }
-                    for series_index, summary in enumerate(series_summaries)
-                ],
-            },
-        },
-    ]
 
     summarized_result = {
         "testId": test_id,
@@ -297,13 +237,117 @@ def summarize_value_arrays_tool(arguments: dict[str, Any], result: str) -> ToolE
     return ToolExecutionResult(
         model_payload={"result": summarized_result},
         client_result=client_result,
-        analysis=analysis,
+        analysis=[],
+    )
+
+
+def summarize_value_columns_tool(arguments: dict[str, Any], result: str) -> ToolExecutionResult:
+    payload = tool_result_payload(result)
+    parsed_result = payload.get("result")
+    if not isinstance(parsed_result, dict):
+        return ToolExecutionResult(model_payload=payload, client_result=parsed_result)
+
+    raw_value_columns = parsed_result.get("valueColumns")
+    if not isinstance(raw_value_columns, list):
+        return ToolExecutionResult(model_payload=payload, client_result=parsed_result)
+
+    series_summaries: list[dict[str, Any]] = []
+    client_value_columns: list[dict[str, Any]] = []
+
+    for index, raw_column in enumerate(raw_value_columns):
+        column = raw_column if isinstance(raw_column, dict) else {}
+        values = column.get("values")
+        if not isinstance(values, list):
+            client_value_columns.append(sanitize_json_value(column))
+            continue
+
+        plotted_values = [_safe_numeric(value) for value in values]
+        finite_values = [value for value in plotted_values if value is not None]
+        name = column.get("name")
+        source_document_id = column.get("sourceDocumentId")
+
+        if isinstance(name, str) and name.strip():
+            label = name.strip()
+        else:
+            label = f"Value column {index + 1}"
+
+        if column.get("duplicate") and isinstance(source_document_id, str) and source_document_id:
+            label = f"{label} ({source_document_id})"
+
+        series_summaries.append(
+            {
+                "label": label,
+                "name": name,
+                "childId": column.get("childId"),
+                "sourceDocumentId": source_document_id,
+                "points": len(values),
+                "finitePoints": len(finite_values),
+                "missingPoints": len(values) - len(finite_values),
+                "min": min(finite_values) if finite_values else None,
+                "max": max(finite_values) if finite_values else None,
+            }
+        )
+        client_value_columns.append(
+            sanitize_json_value(
+                {
+                    **column,
+                    "values": plotted_values,
+                }
+            )
+        )
+
+    if not any(isinstance(column.get("values"), list) for column in client_value_columns):
+        return ToolExecutionResult(model_payload=payload, client_result=parsed_result)
+
+    strict = bool(parsed_result.get("strict", arguments.get("strict", True)))
+    include_values = bool(parsed_result.get("includeValues", arguments.get("include_values", False)))
+    values_limit = parsed_result.get("valuesLimit", arguments.get("values_limit"))
+    test_id = parsed_result.get("testId") or arguments.get("test_id")
+
+    summarized_result = {
+        "testId": test_id,
+        "strict": strict,
+        "includeValues": include_values,
+        "count": parsed_result.get("count", len(client_value_columns)),
+        "valuesLimit": values_limit,
+        "plotShownToUser": include_values,
+        "note": (
+            "If values were requested, a line plot of the returned value columns is already shown to the user. "
+            "Raw values are intentionally omitted from model context to keep the prompt small."
+        ),
+        "seriesSummaries": [
+            {
+                **summary,
+                "minText": _format_value(summary["min"]),
+                "maxText": _format_value(summary["max"]),
+            }
+            for summary in series_summaries
+        ],
+        "valueColumns": [
+            {
+                key: value
+                for key, value in sanitize_json_value(column).items()
+                if key != "values"
+            }
+            for column in client_value_columns
+        ],
+    }
+    client_result = {
+        **summarized_result,
+        "valueColumns": client_value_columns,
+    }
+    return ToolExecutionResult(
+        model_payload={"result": summarized_result},
+        client_result=client_result,
+        analysis=[],
     )
 
 
 def execute_tool_for_chat(name: str, arguments: dict[str, Any], result: str) -> ToolExecutionResult:
     if name == "db_get_test_value_arrays":
         return summarize_value_arrays_tool(arguments, result)
+    if name == "db_get_test_value_columns":
+        return summarize_value_columns_tool(arguments, result)
     payload = tool_result_payload(result)
     return ToolExecutionResult(
         model_payload=payload,

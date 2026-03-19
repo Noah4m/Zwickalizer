@@ -27,5 +27,5 @@ GEMINI_API_KEY=your-gemini-api-key
 
 ## MongoDB Connect
 ```bash
-docker network connect matai-net txp-database
+docker network connect zwickalizer_matai-net txp-database
 ```

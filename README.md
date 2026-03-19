@@ -23,13 +23,13 @@ Required environment variable:
 ```bash
 OPENAI_API_KEY=your-openai-api-key
 OPENAI_MODEL=gpt-4.1-mini
+MONGO_URI=mongodb://host.docker.internal:27017
+MONGO_DB=txp_clean
 ```
 
 Compatibility note:
 If your local `.env` already uses `OPEN_API_KEY`, the agent will still accept it.
 
-
-## MongoDB Connect
-```bash
-docker network connect zwickalizer_matai-net txp-database
-```
+MongoDB note:
+By default, the agent container connects to MongoDB on your host via `host.docker.internal`.
+If your database runs in another container, override `MONGO_URI` to that container hostname on the same Docker network.

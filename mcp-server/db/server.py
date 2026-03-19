@@ -3,7 +3,7 @@ MCP Server — Material Testing Lab (Python)
 Covers Tier 1 (data retrieval) and Tier 2/3 (comparison + analytics)
 
 Dependencies:
-    pip install mcp pymongo scipy numpy python-dotenv
+    pip install mcp pymongo python-dotenv
 
 Run:
     python mcp_server_sketch.py
@@ -22,20 +22,22 @@ The server communicates over stdio — connect it from your MCP client config:
 
 import os
 import json
-import math
 import asyncio
-from datetime import datetime, timezone
-from typing import Optional
 
-import numpy as np
-from scipy import stats as scipy_stats
 from pymongo import MongoClient
 from pymongo.collection import Collection
-from bson import ObjectId
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
+from value_lookup import (
+    extract_value_arrays,
+    find_test_by_id,
+    find_value_column_by_name,
+    numeric_values,
+    resolve_test_value_columns,
+    resolve_value_column_documents,
+)
 
 # ─── DB connection ────────────────────────────────────────────────────────────
 
@@ -51,20 +53,11 @@ values_col: Collection = db["valuecolumns_migrated"]
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def build_filename(test_id: str, value_table_id: str) -> str:
-    """
-    Reconstruct the filename key used in valuecolumns_migrated.
-    Adjust the format to match your actual naming convention.
-    """
-    return f"{test_id}_{value_table_id}"
-
-
 def resolve_column(test_id: str, value_column: dict) -> list[float]:
-    """Look up the actual values array from valuecolumns_migrated."""
-    filename = build_filename(str(test_id), str(value_column["valueTableId"]))
-    doc = values_col.find_one({"filename": filename})
-    if doc and "values" in doc:
-        return [v for v in doc["values"] if isinstance(v, (int, float))]
+    """Look up the actual numeric values array from valuecolumns_migrated."""
+    docs = resolve_value_column_documents(values_col, test_id, value_column)
+    if docs:
+        return numeric_values(docs[0].get("values", []))
     return []
 
 
@@ -72,17 +65,15 @@ def fetch_column_values(
     test_id: str, column_name: str, page: int = 0, page_size: int = 500
 ) -> dict:
     """Paginated raw value fetch for a single test + column."""
-    test = tests_col.find_one({"_id": ObjectId(test_id)}, {"valueColumns": 1})
+    test = find_test_by_id(tests_col, test_id, {"valueColumns": 1})
     if not test:
         return {"values": [], "total": 0, "page": page, "page_size": page_size}
 
-    col = next(
-        (c for c in test.get("valueColumns", []) if c.get("name") == column_name), None
-    )
+    col = find_value_column_by_name(test, column_name)
     if not col:
         return {"values": [], "total": 0, "page": page, "page_size": page_size}
 
-    all_values = resolve_column(str(test["_id"]), col)
+    all_values = resolve_column(test["_id"], col)
     start = page * page_size
     return {
         "values": all_values[start : start + page_size],
@@ -100,18 +91,17 @@ def collect_property_values(test_ids: list[str], column_name: str) -> list[dict]
     """
     results = []
     for tid in test_ids:
-        test = tests_col.find_one(
-            {"_id": ObjectId(tid)}, {"valueColumns": 1, "TestParametersFlat.date": 1}
+        test = find_test_by_id(
+            tests_col,
+            tid,
+            {"valueColumns": 1, "TestParametersFlat.date": 1},
         )
         if not test:
             continue
-        col = next(
-            (c for c in test.get("valueColumns", []) if c.get("name") == column_name),
-            None,
-        )
+        col = find_value_column_by_name(test, column_name)
         if not col:
             continue
-        values = resolve_column(str(test["_id"]), col)
+        values = resolve_column(test["_id"], col)
         if values:
             results.append(
                 {
@@ -122,50 +112,13 @@ def collect_property_values(test_ids: list[str], column_name: str) -> list[dict]
             )
     return results
 
-
-def flat_values(collected: list[dict]) -> list[float]:
-    return [v for entry in collected for v in entry["values"]]
-
-
-def describe_values(values: list[float]) -> Optional[dict]:
-    if not values:
-        return None
-    arr = np.array(values)
-    return {
-        "n": len(values),
-        "mean": round(float(arr.mean()), 6),
-        "std": round(float(arr.std(ddof=1)), 6),
-        "min": round(float(arr.min()), 6),
-        "max": round(float(arr.max()), 6),
-        "median": round(float(np.median(arr)), 6),
-        "p5": round(float(np.percentile(arr, 5)), 6),
-        "p95": round(float(np.percentile(arr, 95)), 6),
-    }
-
-
-def parse_date(s: Optional[str]) -> Optional[datetime]:
-    if not s:
-        return None
-    return datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
-
-
-def date_filter(date_from: Optional[str], date_to: Optional[str]) -> dict:
-    f: dict = {}
-    if date_from:
-        f["$gte"] = parse_date(date_from)
-    if date_to:
-        f["$lte"] = parse_date(date_to)
-    elif date_from:
-        f["$lte"] = datetime.now(timezone.utc)
-    return f
-
-
 # Minimal projection — always exclude raw value arrays unless requested
 META_PROJ = {
     "TestParametersFlat": 1,
     "valueColumns._id": 1,
     "valueColumns.valueTableId": 1,
     "valueColumns.name": 1,
+    "valueColumns.unitTableId": 1,
 }
 
 
@@ -225,6 +178,67 @@ async def list_tools() -> list[types.Tool]:
                 },
             },
         ),
+        types.Tool(
+            name="get_test_value_columns",
+            description=(
+                "Resolve all stored valuecolumns_migrated entries for a single test id "
+                "by joining metadata.refId and metadata.childId. Returns only _Value columns. "
+                "By default this returns metadata and counts only; raw values are opt-in. "
+                "Set strict=false to return every valuecolumns_migrated document for the test refId."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "test_id": {
+                        "type": "string",
+                        "description": "The _tests._id value for the test to resolve.",
+                    },
+                    "strict": {
+                        "type": "boolean",
+                        "description": "When true, only return validated _Value matches from test.valueColumns. When false, return all documents with metadata.refId matching the test id.",
+                        "default": True,
+                    },
+                    "include_values": {
+                        "type": "boolean",
+                        "description": "Set true to include raw values arrays in the response.",
+                        "default": False,
+                    },
+                    "values_limit": {
+                        "type": "integer",
+                        "description": "Maximum number of values to return per matched column when include_values=true.",
+                        "minimum": 0,
+                    },
+                },
+                "required": ["test_id"],
+            },
+        ),
+        types.Tool(
+            name="get_test_value_arrays",
+            description=(
+                "Return the values arrays for a single test id as an array of arrays. "
+                "Use strict=true for validated _Value matches only, or strict=false for all documents with matching metadata.refId."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "test_id": {
+                        "type": "string",
+                        "description": "The _tests._id value for the test to resolve.",
+                    },
+                    "strict": {
+                        "type": "boolean",
+                        "description": "When true, only return validated _Value matches from test.valueColumns. When false, return all documents with metadata.refId matching the test id.",
+                        "default": True,
+                    },
+                    "values_limit": {
+                        "type": "integer",
+                        "description": "Maximum number of values to return per matched document.",
+                        "minimum": 0,
+                    },
+                },
+                "required": ["test_id"],
+            },
+        ),
     ]
 
 
@@ -258,6 +272,56 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         )
         results = [format_test(d) for d in cursor]
         return ok({"tests": results})
+
+    if name == "get_test_value_columns":
+        test_id = arguments["test_id"]
+        strict = bool(arguments.get("strict", True))
+        include_values = bool(arguments.get("include_values", False))
+        values_limit = arguments.get("values_limit")
+        resolved = resolve_test_value_columns(
+            tests_col,
+            values_col,
+            test_id,
+            strict=strict,
+            include_values=include_values,
+            values_limit=values_limit if isinstance(values_limit, int) else None,
+        )
+        if resolved is None:
+            return ok({"error": f"Test not found for id: {test_id}", "valueColumns": []})
+        return ok(
+            {
+                "testId": test_id,
+                "count": len(resolved),
+                "strict": strict,
+                "includeValues": include_values,
+                "valuesLimit": values_limit if isinstance(values_limit, int) else None,
+                "valueColumns": resolved,
+            }
+        )
+
+    if name == "get_test_value_arrays":
+        test_id = arguments["test_id"]
+        strict = bool(arguments.get("strict", True))
+        values_limit = arguments.get("values_limit")
+        resolved = resolve_test_value_columns(
+            tests_col,
+            values_col,
+            test_id,
+            strict=strict,
+            include_values=True,
+            values_limit=values_limit if isinstance(values_limit, int) else None,
+        )
+        if resolved is None:
+            return ok({"error": f"Test not found for id: {test_id}", "valueArrays": []})
+        return ok(
+            {
+                "testId": test_id,
+                "strict": strict,
+                "count": len(resolved),
+                "valuesLimit": values_limit if isinstance(values_limit, int) else None,
+                "valueArrays": extract_value_arrays(resolved),
+            }
+        )
 
     return ok({"error": f"Unknown tool: {name}"})
 

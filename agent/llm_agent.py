@@ -2,6 +2,7 @@ import json
 from typing import Any, List
 
 from google import genai
+from google.genai.errors import ClientError
 from google.genai import types
 
 from mcp_client import MCPToolbox
@@ -85,7 +86,7 @@ def response_content_for_history(response: Any) -> Any:
             return content
 
     text = extract_text(response)
-    return types.Content(role="model", parts=[types.Part(text=text or "")])
+    return types.Content(role="model", parts=[types.Part.from_text(text=text or "")])
 
 
 def function_call_arguments(function_call: Any) -> dict[str, Any]:
@@ -106,6 +107,20 @@ def function_call_arguments(function_call: Any) -> dict[str, Any]:
         return arguments
 
     return {}
+
+
+def user_message_content(text: str) -> types.Content:
+    return types.Content(role="user", parts=[types.Part.from_text(text=text)])
+
+
+def format_model_error(exc: Exception) -> str:
+    message = str(exc)
+    if isinstance(exc, ClientError) and getattr(exc, "status_code", None) == 429:
+        return (
+            "The Gemini API quota is currently exhausted for this project, so I cannot generate a reply right now. "
+            "Please wait and try again later, or switch to a different model/key with available quota."
+        )
+    return f"Model error: {message}"
 
 
 class MCPEnabledChatAgent:
@@ -129,38 +144,65 @@ Latest user question:
 {message}
 """.strip()
 
-        with MCPToolbox(self.mcp_server_root) as toolbox:
-            config = types.GenerateContentConfig(
-                tools=toolbox.google_tools(),
-                temperature=0.2,
-            )
-            contents: list[Any] = [prompt]
+        base_contents: list[Any] = [user_message_content(prompt)]
+        fallback_instruction = (
+            "\n\nTool status:\n"
+            "If external tools are unavailable, answer general questions normally. "
+            "If the user asks for data that requires tools, explain that the tools are currently unavailable."
+        )
 
-            for _ in range(6):
-                response = self.client.models.generate_content(
-                    model=self.model,
-                    contents=contents,
-                    config=config,
+        try:
+            with MCPToolbox(self.mcp_server_root) as toolbox:
+                config = types.GenerateContentConfig(
+                    tools=toolbox.google_tools(),
+                    temperature=0.2,
                 )
+                contents: list[Any] = list(base_contents)
 
-                function_calls = extract_function_calls(response)
-                if not function_calls:
-                    return extract_text(response) or "I could not generate a response."
-
-                contents.append(response_content_for_history(response))
-
-                tool_parts: list[Any] = []
-                for function_call in function_calls:
-                    name = getattr(function_call, "name", "")
-                    arguments = function_call_arguments(function_call)
-                    result = toolbox.call(name, arguments)
-                    tool_parts.append(
-                        types.Part.from_function_response(
-                            name=name,
-                            response={"result": result},
-                        )
+                for _ in range(6):
+                    response = self.client.models.generate_content(
+                        model=self.model,
+                        contents=contents,
+                        config=config,
                     )
 
-                contents.append(types.Content(role="tool", parts=tool_parts))
+                    function_calls = extract_function_calls(response)
+                    if not function_calls:
+                        return extract_text(response) or "I could not generate a response."
 
-        return "I could not complete the tool workflow."
+                    contents.append(response_content_for_history(response))
+
+                    tool_parts: list[Any] = []
+                    for function_call in function_calls:
+                        name = getattr(function_call, "name", "")
+                        arguments = function_call_arguments(function_call)
+                        try:
+                            result = toolbox.call(name, arguments)
+                            response_payload = {"result": result}
+                        except Exception as exc:
+                            response_payload = {"error": str(exc)}
+
+                        tool_parts.append(
+                            types.Part.from_function_response(
+                                name=name,
+                                response=response_payload,
+                            )
+                        )
+
+                    contents.append(types.Content(role="tool", parts=tool_parts))
+
+                return "I could not complete the tool workflow."
+        except ClientError as exc:
+            return format_model_error(exc)
+        except Exception:
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model,
+                    contents=[
+                        user_message_content(prompt + fallback_instruction),
+                    ],
+                    config=types.GenerateContentConfig(temperature=0.2),
+                )
+                return extract_text(response) or "I could not generate a response."
+            except ClientError as exc:
+                return format_model_error(exc)

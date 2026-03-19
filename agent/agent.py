@@ -1,4 +1,5 @@
 import os
+import traceback
 from typing import List, Literal
 
 from fastapi import FastAPI, HTTPException
@@ -31,6 +32,7 @@ async def chat(req: ChatRequest):
         )
         return {"answer": answer}
     except Exception as exc:
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 

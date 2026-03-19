@@ -5,6 +5,7 @@ This is where you'd add auth, rate-limiting, session management later.
 """
 import os
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
@@ -42,7 +43,8 @@ async def chat(req: ChatRequest):
     }
     async with httpx.AsyncClient(timeout=120) as client:
         r = await client.post(f"{AGENT_URL}/chat", json=payload)
-        r.raise_for_status()
+        if r.is_error:
+            raise HTTPException(status_code=r.status_code, detail=r.text)
         return r.json()
 
 

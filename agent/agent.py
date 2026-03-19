@@ -7,14 +7,13 @@ sends the conversation to Gemini, and returns the model's reply.
 import json
 import os
 import csv
-from typing import List
+from typing import List, Literal
 from pathlib import Path
 from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from bson import json_util
 from google import genai
-from google.genai import types
 from pymongo import MongoClient
 from pydantic import BaseModel
 
@@ -28,7 +27,7 @@ MODEL = "gemini-2.5-flash-lite"
 LOG_FILE = Path(os.environ.get("TOOL_LOG_FILE", "log.csv"))
 
 gemini = genai.Client(api_key=GEMINI_API_KEY)
-mongo = MongoClient(MONGO_URI)
+mongo = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)
 db = mongo[MONGO_DB]
 
 SYSTEM_PROMPT = """You are MatAI, a concise and practical assistant.
@@ -42,7 +41,32 @@ Use "{}" when no filter is needed and 5 when no limit is requested.
 
 class ChatRequest(BaseModel):
     message: str
+    role: Literal["engineer", "executive"] | None = None
     history: List[dict] = []  # [{"role": "user"|"assistant", "content": "..."}]
+
+
+def audience_instruction(role: str | None) -> str:
+    if role == "executive":
+        return (
+            "Answer for an executive audience. Focus on the takeaway, risk, and next action. "
+            "Keep technical detail to a minimum."
+        )
+    return (
+        "Answer for an engineering audience. Be concrete about findings, relevant fields, and "
+        "technical implications."
+    )
+
+
+def format_history(history: List[dict]) -> str:
+    lines: list[str] = []
+    for item in history:
+        role = item.get("role", "user")
+        content = str(item.get("content", "")).strip()
+        if not content:
+            continue
+        speaker = "Assistant" if role == "assistant" else "User"
+        lines.append(f"{speaker}: {content}")
+    return "\n".join(lines) if lines else "No prior conversation."
 
 
 
@@ -54,6 +78,14 @@ def debug_db_overview():
         }
     except Exception as exc:
         return {"error": str(exc)}
+
+
+def get_db_error() -> str | None:
+    try:
+        mongo.admin.command("ping")
+        return None
+    except Exception as exc:
+        return str(exc)
 
 
 def log_event(event_type: str, details: dict, status: str, message: str) -> None:
@@ -136,6 +168,18 @@ def find_tests_by_text(search: str):
     return list(db["Tests"].find(query).limit(5))
 
 
+def unavailable_db_message(role: str | None) -> str:
+    if role == "executive":
+        return (
+            "I cannot access the test database right now, so I cannot provide live test results. "
+            "Please try again once the database connection is restored."
+        )
+    return (
+        "The test database is not reachable right now, so I cannot query live results. "
+        "Please check the MongoDB connection and try again."
+    )
+
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
     log_event(
@@ -148,49 +192,73 @@ async def chat(req: ChatRequest):
         "Incoming chat request",
     )
 
-    print("DB overview:", debug_db_overview())
-    print("Using DB:", MONGO_DB)
-    print("Collections:", db.list_collection_names())
-
-
-    contents: list[types.Content] = []
-
-    for item in req.history:
-        role = "model" if item["role"] == "assistant" else "user"
-        contents.append(
-            types.Content(
-                role=role,
-                parts=[types.Part(text=item["content"])],
-            )
-        )
-
-    contents.append(
-        types.Content(
-            role="user",
-            parts=[types.Part(text=req.message)],
-        )
-    )
-
     try:
+        db_error = get_db_error()
+        print("DB overview:", debug_db_overview())
+        print("Using DB:", MONGO_DB)
+
+        if db_error:
+            answer = unavailable_db_message(req.role)
+            log_event(
+                "chat_response",
+                {
+                    "message": req.message,
+                    "role": req.role,
+                    "history_length": len(req.history),
+                    "db_available": False,
+                },
+                "success",
+                answer,
+            )
+            return {"answer": answer}
+
         # 1. Get data from Mongo (controlled, deterministic)
-        data = find_tests_by_text(req.message)
+        try:
+            data = find_tests_by_text(req.message)
+        except Exception as exc:
+            answer = unavailable_db_message(req.role)
+            log_event(
+                "chat_response",
+                {
+                    "message": req.message,
+                    "role": req.role,
+                    "history_length": len(req.history),
+                    "db_available": False,
+                    "db_error_type": type(exc).__name__,
+                },
+                "success",
+                answer,
+            )
+            return {"answer": answer}
 
         # 2. Convert Mongo docs to JSON string
         data_json = json_util.dumps(data)
 
         # 3. Build prompt
+        conversation = format_history(req.history)
         prompt = f"""
-        User question:
-        {req.message}
+System instructions:
+{SYSTEM_PROMPT.strip()}
 
-        Database results:
-        {data_json}
+Audience instructions:
+{audience_instruction(req.role)}
 
-        Instructions:
-        - Summarize the results clearly
-        - If no results, say "No matching tests found"
-        - Keep it concise
-        """
+Conversation history:
+{conversation}
+
+Latest user question:
+{req.message}
+
+Database results:
+{data_json}
+
+Response requirements:
+- Answer the latest user question directly
+- Use the conversation history when it changes the interpretation
+- Summarize the database results clearly
+- If no results, say "No matching tests found"
+- Keep it concise
+""".strip()
 
         # 4. Call LLM ONLY for summarization
         response = gemini.models.generate_content(
@@ -208,6 +276,7 @@ async def chat(req: ChatRequest):
             "chat_response",
             {
                 "message": req.message,
+                "role": req.role,
                 "history_length": len(req.history),
             },
             "success",
@@ -219,6 +288,7 @@ async def chat(req: ChatRequest):
             "chat_response",
             {
                 "message": req.message,
+                "role": req.role,
                 "history_length": len(req.history),
                 "error_type": type(exc).__name__,
             },
@@ -230,7 +300,15 @@ async def chat(req: ChatRequest):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    db_error = get_db_error()
+    return {
+        "status": "ok" if db_error is None else "degraded",
+        "database": {
+            "reachable": db_error is None,
+            "name": MONGO_DB,
+            "error": db_error,
+        },
+    }
 
 
 if __name__ == "__main__":

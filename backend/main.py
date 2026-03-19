@@ -29,6 +29,7 @@ class Message(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    role: str | None = None
     history: List[Message] = []
 
 
@@ -36,6 +37,7 @@ class ChatRequest(BaseModel):
 async def chat(req: ChatRequest):
     payload = {
         "message": req.message,
+        "role": req.role,
         "history": [m.model_dump() for m in req.history],
     }
     async with httpx.AsyncClient(timeout=120) as client:

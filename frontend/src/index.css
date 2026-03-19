@@ -1,35 +1,99 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap');
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-:root {
-  --bg:        #0d0f11;
-  --bg2:       #141618;
-  --bg3:       #1c1f22;
-  --border:    #2a2d32;
-  --border2:   #3a3f46;
-  --text:      #d4d8de;
-  --text2:     #7a8290;
-  --text3:     #4a5060;
-  --accent:    #4ade80;   /* green — "go / healthy" */
-  --accent2:   #facc15;   /* amber — "caution / stats" */
-  --accent3:   #60a5fa;   /* blue — "info / tool calls" */
-  --danger:    #f87171;
-  --radius:    6px;
-  --font-mono: 'IBM Plex Mono', monospace;
-  --font-sans: 'IBM Plex Sans', sans-serif;
+@layer base {
+  :root {
+    --background: 210 60% 98%;
+    --foreground: 220 28% 18%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 28% 18%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 28% 18%;
+
+    --primary: 2 78% 58%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 45% 96%;
+    --secondary-foreground: 220 28% 18%;
+
+    --muted: 210 36% 93%;
+    --muted-foreground: 220 12% 46%;
+
+    --accent: 201 82% 64%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 78% 58%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 32% 86%;
+    --input: 214 32% 90%;
+    --ring: 2 78% 58%;
+
+    --radius: 18px;
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 220 24% 24%;
+    --sidebar-primary: 2 78% 58%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 45% 96%;
+    --sidebar-accent-foreground: 220 28% 18%;
+    --sidebar-border: 214 32% 86%;
+    --sidebar-ring: 2 78% 58%;
+
+    --font-mono: 'JetBrains Mono', monospace;
+    --font-sans: 'Inter', sans-serif;
+
+    --surface-user: 2 88% 95%;
+    --surface-ai: 0 0% 100%;
+    --text-secondary: 220 12% 46%;
+    --glow-primary: 0 18px 50px hsl(2 78% 58% / 0.16);
+    --shadow-soft: 0 10px 30px hsl(220 30% 30% / 0.08);
+    --shadow-elevated: 0 18px 60px hsl(220 35% 35% / 0.12);
+  }
 }
 
-html, body, #root {
-  height: 100%;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 1.6;
-  -webkit-font-smoothing: antialiased;
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    background:
+      radial-gradient(circle at top left, hsl(var(--accent) / 0.22), transparent 28%),
+      radial-gradient(circle at top right, hsl(var(--primary) / 0.16), transparent 22%),
+      linear-gradient(180deg, hsl(210 60% 98%), hsl(214 54% 95%));
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    background: transparent;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-mono);
+  }
+
+  code, pre, .font-mono {
+    font-family: var(--font-mono);
+  }
 }
 
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground));
+}

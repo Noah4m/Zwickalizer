@@ -98,15 +98,19 @@ export default function ChatInterface() {
     setLoading(true);
 
     try {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 30000);
       const res = await fetch(`/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           message: text,
           role,
           history: history.map((message) => ({ role: message.role, content: message.content })),
         }),
       });
+      window.clearTimeout(timeoutId);
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -126,13 +130,19 @@ export default function ChatInterface() {
         updatedAt: Date.now(),
       }));
     } catch (error) {
+      const message =
+        error instanceof DOMException && error.name === "AbortError"
+          ? "Request timed out after 30 seconds. Check `docker compose logs -f frontend backend agent`."
+          : error instanceof Error
+            ? error.message
+            : "Unknown error";
       patchThread(activeThread.id, (thread) => ({
         ...thread,
         messages: [
           ...thread.messages,
           {
             role: "assistant",
-            content: `⚠ Error: ${error instanceof Error ? error.message : "Unknown error"}`,
+            content: `⚠ Error: ${message}`,
             toolCalls: [],
             timestamp: new Date(),
           },

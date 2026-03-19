@@ -1,11 +1,15 @@
 # LLM orchestration layer: builds prompts, calls OpenAI, and runs MCP tools when needed.
 import json
-from typing import Any, List
+import logging
+from typing import Any, Callable, List
 
 import openai
 from openai import OpenAI
 
 from mcp_client import MCPToolbox
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 SYSTEM_PROMPT = """You are MatAI, a concise and practical assistant.
@@ -14,6 +18,7 @@ Use tools only when they are genuinely needed.
 If the user asks for general knowledge or casual conversation, answer without using tools.
 If the user asks about stored test data, materials data, measurements, trends, or records, use the available MCP tools.
 Do not invent tool results.
+IMPORTANT: Only answer once the question is fully answered!!!
 """
 
 
@@ -51,7 +56,24 @@ def extract_text(response: Any) -> str:
         return ""
 
     content = getattr(message, "content", None)
-    return content.strip() if isinstance(content, str) else ""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        text_parts.append(text)
+                    elif isinstance(text, dict) and isinstance(text.get("value"), str):
+                        text_parts.append(text["value"])
+                elif isinstance(item.get("text"), str):
+                    text_parts.append(item["text"])
+            elif hasattr(item, "text") and isinstance(item.text, str):
+                text_parts.append(item.text)
+        return "\n".join(part.strip() for part in text_parts if part and part.strip())
+    return ""
 
 
 def function_call_arguments(arguments: Any) -> dict[str, Any]:
@@ -80,17 +102,56 @@ def format_model_error(exc: Exception) -> str:
     return f"Model error: {message}"
 
 
+def tool_result_payload(result: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(result)
+    except (TypeError, json.JSONDecodeError):
+        parsed = None
+
+    if parsed is not None:
+        return {"result": parsed}
+    return {"result_text": result}
+
+
+def looks_incomplete_after_tools(text: str) -> bool:
+    normalized = " ".join(text.lower().split())
+    if not normalized:
+        return True
+
+    incomplete_markers = (
+        "please hold on",
+        "one moment",
+        "please wait",
+        "i will now retrieve",
+        "i'll now retrieve",
+        "i will retrieve",
+        "i'll retrieve",
+        "let me retrieve",
+        "fetching the data",
+        "retrieving the data",
+    )
+    return any(marker in normalized for marker in incomplete_markers)
+
+
 class MCPEnabledChatAgent:
-    def __init__(self, api_key: str, model: str, mcp_server_root: str):
-        self.client = OpenAI(api_key=api_key)
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        mcp_server_root: str,
+        client: Any | None = None,
+        toolbox_factory: Callable[[str], MCPToolbox] = MCPToolbox,
+    ):
+        self.client = client or OpenAI(api_key=api_key)
         self.model = model
         self.mcp_server_root = mcp_server_root
+        self.toolbox_factory = toolbox_factory
 
     def _completion(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None):
         request: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "temperature": 0.2,
+            "temperature": 0.0,
         }
         if tools:
             request["tools"] = tools
@@ -119,9 +180,10 @@ Latest user question:
         )
 
         try:
-            with MCPToolbox(self.mcp_server_root) as toolbox:
+            with self.toolbox_factory(self.mcp_server_root) as toolbox:
                 tools = toolbox.openai_tools()
                 messages: list[dict[str, Any]] = list(base_messages)
+                used_tool = False
 
                 for _ in range(6):
                     response = self._completion(messages, tools)
@@ -137,16 +199,34 @@ Latest user question:
                     messages.append(assistant_payload)
 
                     if not tool_calls:
-                        return extract_text(response) or "I could not generate a response."
+                        final_text = extract_text(response)
+                        if used_tool and looks_incomplete_after_tools(final_text):
+                            logger.warning(
+                                "Model returned an incomplete post-tool answer; forcing one more completion turn"
+                            )
+                            messages.append(
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "You already have the tool results. Answer the user's request now. "
+                                        "Do not say that you will retrieve data or ask the user to wait. "
+                                        "If no matching records were found, say that explicitly."
+                                    ),
+                                }
+                            )
+                            continue
+                        return final_text or "I could not generate a response."
 
                     for tool_call in tool_calls:
                         function = getattr(tool_call, "function", None)
                         name = getattr(function, "name", "")
                         arguments = function_call_arguments(getattr(function, "arguments", None))
+                        logger.info("Model requested MCP tool '%s' with arguments: %s", name, json.dumps(arguments, default=str))
                         try:
                             result = toolbox.call(name, arguments)
-                            response_payload = json.dumps({"result": result})
+                            response_payload = json.dumps(tool_result_payload(result))
                         except Exception as exc:
+                            logger.exception("MCP tool '%s' failed during chat answer", name)
                             response_payload = json.dumps({"error": str(exc)})
 
                         messages.append(
@@ -156,11 +236,13 @@ Latest user question:
                                 "content": response_payload,
                             }
                         )
+                        used_tool = True
 
                 return "I could not complete the tool workflow."
         except openai.APIError as exc:
             return format_model_error(exc)
         except Exception:
+            logger.exception("Falling back after MCP or agent failure")
             try:
                 response = self._completion(
                     [{"role": "user", "content": prompt + fallback_instruction}],

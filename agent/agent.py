@@ -1,12 +1,14 @@
+import json
 import os
 import traceback
 from typing import List, Literal
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException, Response
+from pydantic import BaseModel, Field
 
 from llm_agent import MCPEnabledChatAgent
+from mcp_client import MCPToolbox
 
 
 load_dotenv()
@@ -30,7 +32,33 @@ chat_agent = MCPEnabledChatAgent(
 class ChatRequest(BaseModel):
     message: str
     role: Literal["engineer", "executive"] | None = None
-    history: List[dict] = []
+    history: List[dict] = Field(default_factory=list)
+
+
+def inspect_mcp() -> dict:
+    with MCPToolbox(chat_agent.mcp_server_root) as toolbox:
+        tool_names = sorted(toolbox.tools)
+        payload: dict = {
+            "status": "ok",
+            "servers": sorted(toolbox.sessions),
+            "tools": tool_names,
+        }
+
+        if "db_list_collections" not in toolbox.tools:
+            payload["db"] = {
+                "status": "skipped",
+                "reason": "db_list_collections tool is not registered.",
+            }
+            return payload
+
+        raw_collections = toolbox.call("db_list_collections", {})
+        collections = json.loads(raw_collections)
+        payload["db"] = {
+            "status": "ok",
+            "collections_count": len(collections) if isinstance(collections, list) else None,
+            "sample_collections": collections[:5] if isinstance(collections, list) else [],
+        }
+        return payload
 
 
 @app.post("/chat")
@@ -48,12 +76,21 @@ async def chat(req: ChatRequest):
 
 
 @app.get("/health")
-async def health():
-    return {
+async def health(response: Response):
+    payload = {
         "status": "ok",
         "model": chat_agent.model,
         "mcp_server_root": chat_agent.mcp_server_root,
     }
+
+    try:
+        payload["mcp"] = inspect_mcp()
+    except Exception as exc:
+        response.status_code = 503
+        payload["status"] = "degraded"
+        payload["mcp"] = {"status": "error", "error": str(exc)}
+
+    return payload
 
 
 if __name__ == "__main__":

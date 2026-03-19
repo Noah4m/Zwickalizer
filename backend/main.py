@@ -5,9 +5,9 @@ This is where you'd add auth, rate-limiting, session management later.
 """
 import os
 from fastapi import FastAPI
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List
 import httpx
 
@@ -31,7 +31,7 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     role: str | None = None
-    history: List[Message] = []
+    history: List[Message] = Field(default_factory=list)
 
 
 @app.post("/api/chat")
@@ -49,16 +49,26 @@ async def chat(req: ChatRequest):
 
 
 @app.get("/api/health")
-async def health():
+async def health(response: Response):
     async with httpx.AsyncClient(timeout=5) as client:
+        overall_status = "ok"
         services = {}
         for name, url in [("agent", AGENT_URL)]:
             try:
                 r = await client.get(f"{url}/health")
-                services[name] = "ok" if r.status_code == 200 else "degraded"
-            except Exception:
-                services[name] = "unreachable"
-    return {"status": "ok", "services": services}
+                details = r.json()
+                service_status = details.get("status", "ok") if r.status_code == 200 else "degraded"
+                services[name] = {"status": service_status, "details": details}
+                if service_status != "ok":
+                    overall_status = "degraded"
+            except Exception as exc:
+                services[name] = {"status": "unreachable", "error": str(exc)}
+                overall_status = "degraded"
+
+    if overall_status != "ok":
+        response.status_code = 503
+
+    return {"status": overall_status, "services": services}
 
 
 if __name__ == "__main__":

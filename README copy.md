@@ -7,7 +7,8 @@ Chat with your test data using natural language.
 | Service      | Port | What it does |
 |-------------|------|--------------|
 | `db`        | 5432 | PostgreSQL — your test results |
-| `mcp-server`| 8001 | Exposes DB as agent-callable tools |
+| `mcp-db-server` | 8001 | Exposes DB tools to the agent |
+| `mcp-plot-server` | 8004 | Dedicated plotting / visualisation tools |
 | `stats-tool`| 8002 | scipy/statsmodels — real statistics |
 | `agent`     | 8003 | Claude + LangGraph orchestrator |
 | `backend`   | 8000 | FastAPI — bridges frontend ↔ agent |
@@ -34,7 +35,8 @@ User (browser :3000)
   └─→ backend :8000  /api/chat
         └─→ agent :8003  /chat
               ├─→ Anthropic API  (Claude, tool calling)
-              ├─→ mcp-server :8001  /tools/*  (DB queries)
+              ├─→ mcp-db-server :8001  /tools/*  (DB queries)
+              ├─→ mcp-plot-server :8004  /tools/*  (plot payloads)
               └─→ stats-tool :8002  /stats/*  (scipy tests)
                     └─→ db :5432  (PostgreSQL)
 ```
@@ -59,6 +61,12 @@ Add a new `@app.post("/stats/your_test")` endpoint in `stats-tool/server.py`,
 then add the corresponding tool definition in `agent/agent.py` under `TOOLS`.
 Claude will start using it automatically when relevant.
 
+## Adding more MCP servers
+
+Create a new subfolder inside `mcp-server/` with its own `server.py` and
+`Dockerfile`, add a service entry in `docker-compose.yml`, then register the
+tool route in `agent/agent.py`.
+
 ## Folder structure
 
 ```
@@ -68,9 +76,17 @@ matai/
 ├── db/
 │   └── init.sql
 ├── mcp-server/
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── server.py          ← add DB tools here
+│   ├── README.md
+│   ├── requirements/
+│   │   ├── base.txt
+│   │   ├── db.txt
+│   │   └── plot.txt
+│   ├── db/
+│   │   ├── Dockerfile
+│   │   └── server.py      ← DB MCP tools
+│   └── plot/
+│       ├── Dockerfile
+│       └── server.py      ← plotting MCP tools
 ├── stats-tool/
 │   ├── Dockerfile
 │   ├── requirements.txt

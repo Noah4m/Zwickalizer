@@ -7,8 +7,9 @@ const s = {
   wrap: {
     display: 'flex',
     flexDirection: 'column',
-    height: '100vh',
+    height: '100%',
     background: 'var(--bg)',
+    minWidth: 0,
   },
   header: {
     padding: '14px 24px',
@@ -91,7 +92,7 @@ const s = {
   },
 }
 
-export default function Chat({ exampleQuery, onExampleConsumed }) {
+export default function Chat({ exampleQuery, onExampleConsumed, onPlotUpdate }) {
   const [history, setHistory] = useState([])   // {role, content, toolCalls?}
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -133,6 +134,14 @@ export default function Chat({ exampleQuery, onExampleConsumed }) {
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
+      const latestVisualization = Array.isArray(data.visualizations) && data.visualizations.length > 0
+        ? data.visualizations[data.visualizations.length - 1]
+        : null
+
+      if (latestVisualization && onPlotUpdate) {
+        onPlotUpdate(latestVisualization)
+      }
+
       setHistory([...newHistory, {
         role: 'assistant',
         content: data.answer,
@@ -158,7 +167,7 @@ export default function Chat({ exampleQuery, onExampleConsumed }) {
       {/* Header */}
       <div style={s.header}>
         <div style={s.headerDot} />
-        <span style={s.headerTitle}>agent connected · claude-opus</span>
+        <span style={s.headerTitle}>agent connected · gemini tool loop</span>
       </div>
 
       {/* Messages */}

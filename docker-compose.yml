@@ -1,17 +1,38 @@
 services:
 
-  # ── MCP server – exposes MongoDB as tools the agent can call ─────────────
-  mcp-server:
-    build: ./mcp-server
-    container_name: matai-mcp
+  # ── MCP DB server – exposes MongoDB as agent-callable tools ──────────────
+  mcp-db-server:
+    build:
+      context: ./mcp-server
+      dockerfile: db/Dockerfile
+    container_name: matai-mcp-db
+    command: uvicorn server:app --host 0.0.0.0 --port 8001 --reload
     environment:
       MONGO_URL: mongodb://host.docker.internal:27017
       MONGO_DB: txp
       MCP_PORT: 8001
     ports:
       - "8001:8001"
+    volumes:
+      - ./mcp-server/db:/app
     extra_hosts:
       - "host.docker.internal:host-gateway"   # Linux bridge to host
+    networks:
+      - matai-net
+
+  # ── MCP plot server – dedicated visualization tool surface ───────────────
+  mcp-plot-server:
+    build:
+      context: ./mcp-server
+      dockerfile: plot/Dockerfile
+    container_name: matai-mcp-plot
+    command: uvicorn server:app --host 0.0.0.0 --port 8004 --reload
+    environment:
+      PLOT_PORT: 8004
+    ports:
+      - "8004:8004"
+    volumes:
+      - ./mcp-server/plot:/app
     networks:
       - matai-net
 
@@ -19,10 +40,13 @@ services:
   stats-tool:
     build: ./stats-tool
     container_name: matai-stats
+    command: uvicorn server:app --host 0.0.0.0 --port 8002 --reload
     environment:
       STATS_PORT: 8002
     ports:
       - "8002:8002"
+    volumes:
+      - ./stats-tool:/app
     networks:
       - matai-net
 
@@ -30,15 +54,20 @@ services:
   agent:
     build: ./agent
     container_name: matai-agent
+    command: uvicorn agent:app --host 0.0.0.0 --port 8003 --reload
     environment:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
-      MCP_SERVER_URL: http://mcp-server:8001
+      DB_MCP_SERVER_URL: http://mcp-db-server:8001
+      PLOT_MCP_SERVER_URL: http://mcp-plot-server:8004
       STATS_TOOL_URL: http://stats-tool:8002
       AGENT_PORT: 8003
     ports:
       - "8003:8003"
+    volumes:
+      - ./agent:/app
     depends_on:
-      - mcp-server
+      - mcp-db-server
+      - mcp-plot-server
       - stats-tool
     networks:
       - matai-net
@@ -47,11 +76,14 @@ services:
   backend:
     build: ./backend
     container_name: matai-backend
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       AGENT_URL: http://agent:8003
       BACKEND_PORT: 8000
     ports:
       - "8000:8000"
+    volumes:
+      - ./backend:/app
     depends_on:
       - agent
     networks:
@@ -61,10 +93,14 @@ services:
   frontend:
     build: ./frontend
     container_name: matai-frontend
+    command: npm run dev -- --host 0.0.0.0 --port 3000
     environment:
       VITE_BACKEND_URL: http://localhost:8000
     ports:
       - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
     depends_on:
       - backend
     networks:

@@ -13,7 +13,7 @@ const s = {
     borderRight: '1px solid var(--border)',
     display: 'flex',
     flexDirection: 'column',
-    height: '100vh',
+    height: '100%',
     overflow: 'hidden',
   },
   logo: {

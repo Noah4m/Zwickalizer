@@ -24,14 +24,13 @@ services:
     environment:
       AGENT_URL: http://agent:8003
       BACKEND_PORT: 8000
-      MONGO_URI: mongodb://mongo:27017
+      MONGO_URI: mongodb://txp-database:27017
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
     depends_on:
       - agent
-      - mongo
     networks:
       - matai-net
 
@@ -45,16 +44,6 @@ services:
       - "3000:3000"
     depends_on:
       - backend
-    networks:
-      - matai-net
-
-  mongo:
-    image: svenstamm/txp-mongo_44:latest
-    container_name: txp-database
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
     networks:
       - matai-net
 

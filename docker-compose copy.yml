@@ -1,0 +1,53 @@
+services:
+  agent:
+    build: ./agent
+    container_name: matai-agent
+    command: uvicorn agent:app --host 0.0.0.0 --port 8003 --reload
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      AGENT_PORT: 8003
+      MONGO_URI: mongodb://host.docker.internal:27017
+      MONGO_DB: txp_clean
+      MCP_SERVER_ROOT: /mcp-server
+    ports:
+      - "8003:8003"
+    volumes:
+      - ./agent:/app
+      - ./mcp-server:/mcp-server
+    networks:
+      - matai-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  backend:
+    build: ./backend
+    container_name: matai-backend
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      AGENT_URL: http://agent:8003
+      BACKEND_PORT: 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - agent
+    networks:
+      - matai-net
+
+  frontend:
+    build: ./frontend
+    container_name: matai-frontend
+    command: npm run dev -- --host 0.0.0.0 --port 3000
+    environment:
+      VITE_BACKEND_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - matai-net
+
+networks:
+  matai-net:
+    driver: bridge

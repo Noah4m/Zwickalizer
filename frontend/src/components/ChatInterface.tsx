@@ -16,6 +16,7 @@ import {
 } from "@/components/chat/chat-data";
 
 const initialThread = createEmptyThread("engineer");
+const CHAT_REQUEST_TIMEOUT_MS = 120000;
 
 function sortThreads(threads: ChatThread[]) {
   return [...threads].sort((a, b) => b.updatedAt - a.updatedAt);
@@ -99,7 +100,7 @@ export default function ChatInterface() {
 
     try {
       const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), 30000);
+      const timeoutId = window.setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS);
       const res = await fetch(`/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -124,6 +125,7 @@ export default function ChatInterface() {
             role: "assistant",
             content: data.answer,
             toolCalls: data.tool_calls || [],
+            analysis: Array.isArray(data.analysis) && data.analysis.length > 0 ? data.analysis : undefined,
             timestamp: new Date(),
           },
         ],
@@ -132,7 +134,7 @@ export default function ChatInterface() {
     } catch (error) {
       const message =
         error instanceof DOMException && error.name === "AbortError"
-          ? "Request timed out after 30 seconds. Check `docker compose logs -f frontend backend agent`."
+          ? `Request timed out after ${CHAT_REQUEST_TIMEOUT_MS / 1000} seconds. Check \`docker compose logs -f frontend backend agent\`.`
           : error instanceof Error
             ? error.message
             : "Unknown error";
@@ -144,6 +146,7 @@ export default function ChatInterface() {
             role: "assistant",
             content: `⚠ Error: ${message}`,
             toolCalls: [],
+            analysis: undefined,
             timestamp: new Date(),
           },
         ],

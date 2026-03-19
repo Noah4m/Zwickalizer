@@ -64,13 +64,19 @@ export function getSimulatedResponse(input: string, role: UserRole) {
 }
 
 export function deriveAnalysisData(messages: ChatMessage[]): AnalysisData[] {
-  const lastUserMessage = [...messages].reverse().find((message) => message.role === "user")?.content.toLowerCase() ?? "";
-  const lastAssistantMessage = [...messages].reverse().find((message) => message.role === "assistant")?.content.toLowerCase() ?? "";
-  const signal = `${lastUserMessage} ${lastAssistantMessage}`;
+  const latestAssistantMessage = [...messages].reverse().find((message) => message.role === "assistant");
 
-  if (!lastAssistantMessage) {
+  if (!latestAssistantMessage) {
     return [];
   }
+
+  if (latestAssistantMessage.analysis && latestAssistantMessage.analysis.length > 0) {
+    return latestAssistantMessage.analysis;
+  }
+
+  const lastUserMessage = [...messages].reverse().find((message) => message.role === "user")?.content.toLowerCase() ?? "";
+  const lastAssistantMessage = latestAssistantMessage.content.toLowerCase();
+  const signal = `${lastUserMessage} ${lastAssistantMessage}`;
 
   if (signal.includes("test 3") || signal.includes("7075")) {
     return [

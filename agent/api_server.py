@@ -71,13 +71,17 @@ def inspect_mcp() -> dict:
 async def chat(req: ChatRequest):
     try:
         logger.info("Agent received chat request role=%s message=%s", req.role, req.message[:200])
-        answer = chat_agent.answer(
+        response_payload = chat_agent.respond(
             message=req.message,
             role=req.role,
             history=req.history,
         )
         logger.info("Agent returning chat response")
-        return {"answer": answer}
+        return {
+            "answer": response_payload.answer,
+            "tool_calls": response_payload.tool_calls,
+            "analysis": response_payload.analysis,
+        }
     except Exception as exc:
         logger.exception("Agent chat request failed")
         traceback.print_exc()

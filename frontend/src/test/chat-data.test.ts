@@ -63,31 +63,35 @@ describe("deriveAnalysisData", () => {
     ]);
   });
 
-  it("builds a deterministic line plot from db_get_test_value_arrays tool results", () => {
+  it("limits plotted series when many value columns are returned", () => {
     const messages: ChatMessage[] = [
       {
         role: "user",
-        content: "plot the first value column",
+        content: "plot the value columns",
       },
       {
         role: "assistant",
-        content: "I plotted the returned values.",
+        content: "I plotted the returned value columns.",
         toolCalls: [
           {
-            name: "db_get_test_value_arrays",
-            args: { test_id: "T-500", value_column_index: 0 },
+            name: "db_get_test_value_columns",
+            args: { test_id: "T-701" },
             result: {
-              testId: "T-500",
+              testId: "T-701",
               strict: true,
+              includeValues: true,
               valuesLimit: null,
-              seriesSummaries: [{ label: "Result 1", min: 1, max: 3, points: 3, sampledPoints: 3, sampledDown: false }],
-              valueArrays: [
-                {
-                  label: "Result 1",
-                  sampledIndices: [0, 1, 2],
-                  sampledValues: [1, 2, 3],
-                },
-              ],
+              seriesSummaries: Array.from({ length: 10 }, (_, index) => ({
+                label: `Signal ${index + 1}`,
+                points: 3,
+                sampledPoints: 3,
+                sampledDown: false,
+              })),
+              valueColumns: Array.from({ length: 10 }, (_, index) => ({
+                name: `Signal ${index + 1}`,
+                sampledIndices: [0, 1, 2],
+                sampledValues: [index + 1, index + 2, index + 3],
+              })),
             },
           },
         ],
@@ -95,18 +99,12 @@ describe("deriveAnalysisData", () => {
     ];
 
     const analysis = deriveAnalysisData(messages);
+    const chart = analysis[1].data;
 
     expect(analysis).toHaveLength(2);
-    expect(analysis[0].type).toBe("stats");
-    expect(analysis[1].type).toBe("chart");
-
-    const chart = analysis[1].data;
-    expect("kind" in chart && chart.kind).toBe("line");
-    expect("series" in chart && chart.series).toHaveLength(1);
-    expect("points" in chart && chart.points).toEqual([
-      { index: 0, series_1: 1 },
-      { index: 1, series_1: 2 },
-      { index: 2, series_1: 3 },
-    ]);
+    expect(analysis[1].subtitle).toContain("Showing the first 8 of 10 returned value columns");
+    expect("series" in chart && chart.series).toHaveLength(8);
+    expect("series" in chart && chart.series[0]).toEqual({ key: "series_1", label: "Signal 1" });
+    expect("series" in chart && chart.series[7]).toEqual({ key: "series_8", label: "Signal 8" });
   });
 });

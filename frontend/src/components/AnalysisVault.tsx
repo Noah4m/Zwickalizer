@@ -32,6 +32,7 @@ const mutedColor = "hsl(var(--muted-foreground))";
 const gridColor = "hsl(var(--border))";
 const tooltipBackground = "hsl(var(--card) / 0.92)";
 const tooltipBorder = "1px solid hsl(var(--border))";
+const MAX_LEGEND_SERIES = 8;
 
 function resolveSeriesColor(color: string | undefined, index: number) {
   if (color && color in colorMap) {
@@ -81,7 +82,6 @@ function StatsSection({ title, stats }: { title: string; stats: AnalysisStat[] }
 }
 
 function ChartSection({ title, subtitle, chart }: { title: string; subtitle?: string; chart: AnalysisChartData }) {
-  console.log("Rendering ChartSection with data:", chart);
   const isBar = chart.kind === "bar";
   const Chart = isBar ? BarChart : LineChart;
 
@@ -131,7 +131,7 @@ function ChartSection({ title, subtitle, chart }: { title: string; subtitle?: st
             }}
             labelStyle={{ color: mutedColor }}
           />
-          {chart.series.length > 1 && (
+          {chart.series.length > 1 && chart.series.length <= MAX_LEGEND_SERIES && (
             <Legend
               wrapperStyle={{ fontFamily: "JetBrains Mono", fontSize: "11px", color: mutedColor, paddingTop: "10px" }}
             />

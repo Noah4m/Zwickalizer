@@ -39,7 +39,6 @@ from test_metadata import (
 )
 from value_lookup import (
     build_test_id_candidates,
-    extract_value_arrays,
     find_test_by_id,
     find_value_column_by_name,
     numeric_values,
@@ -177,6 +176,8 @@ META_PROJ = {
     "valueColumns.name": 1,
     "valueColumns.unitTableId": 1,
 }
+
+
 def ok(data: dict) -> list[types.TextContent]:
     return [
         types.TextContent(type="text", text=json.dumps(data, indent=2, default=str))
@@ -271,69 +272,33 @@ async def list_tools() -> list[types.Tool]:
             description=(
                 "Resolve all stored valuecolumns_migrated entries for a single test id "
                 "by joining metadata.refId and metadata.childId. Returns only _Value columns. "
-                "By default this returns metadata and counts only; raw values are opt-in. "
+                "Raw values are always included so the frontend can plot them. "
                 "Set strict=false to return every valuecolumns_migrated document for the test refId, "
                 "or pass value_column_index to return only the migrated entry mapped from one "
-                "specific test.valueColumns array position."
+                "specific test.valueColumns array position. "
+                "IMPORTANT: `test_id` must include the literal surrounding curly braces, "
+                "for example `{D1CB87C7-D89F-4583-9DA8-5372DC59F25A}`."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "test_id": {
                         "type": "string",
-                        "description": "The _tests._id value for the test to resolve.",
+                        "description": "The exact `_tests._id` value for the test to resolve, including the surrounding curly braces, for example `{D1CB87C7-D89F-4583-9DA8-5372DC59F25A}`.",
                     },
                     "strict": {
                         "type": "boolean",
                         "description": "When true, only return validated _Value matches from test.valueColumns. When false, return all documents with metadata.refId matching the test id.",
                         "default": True,
                     },
-                    "include_values": {
-                        "type": "boolean",
-                        "description": "Set true to include raw values arrays in the response.",
-                        "default": False,
-                    },
                     "values_limit": {
                         "type": "integer",
-                        "description": "Maximum number of values to return per matched column when include_values=true.",
+                        "description": "Maximum number of values to return per matched column.",
                         "minimum": 0,
                     },
                     "value_column_index": {
                         "type": "integer",
                         "description": "Optional zero-based index into test.valueColumns. Example: 0 returns only the migrated entry mapped from test.valueColumns[0].",
-                        "minimum": 0,
-                    },
-                },
-                "required": ["test_id"],
-            },
-        ),
-        types.Tool(
-            name="get_test_value_arrays",
-            description=(
-                "Return the values arrays for a single test id as an array of arrays. "
-                "Use strict=true for validated _Value matches only, or strict=false for all documents with matching metadata.refId. "
-                "Pass value_column_index to return only the array mapped from one specific test.valueColumns entry."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "test_id": {
-                        "type": "string",
-                        "description": "The _tests._id value for the test to resolve.",
-                    },
-                    "strict": {
-                        "type": "boolean",
-                        "description": "When true, only return validated _Value matches from test.valueColumns. When false, return all documents with metadata.refId matching the test id.",
-                        "default": True,
-                    },
-                    "values_limit": {
-                        "type": "integer",
-                        "description": "Maximum number of values to return per matched document.",
-                        "minimum": 0,
-                    },
-                    "value_column_index": {
-                        "type": "integer",
-                        "description": "Optional zero-based index into test.valueColumns. Example: 0 returns only the migrated array mapped from test.valueColumns[0].",
                         "minimum": 0,
                     },
                 },
@@ -407,41 +372,6 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     if name == "get_test_value_columns":
         test_id = arguments["test_id"]
         strict = bool(arguments.get("strict", True))
-        include_values = bool(arguments.get("include_values", False))
-        values_limit = arguments.get("values_limit")
-        value_column_index = arguments.get("value_column_index")
-        resolved = resolve_test_value_columns(
-            tests_col,
-            values_col,
-            test_id,
-            strict=strict,
-            include_values=include_values,
-            values_limit=values_limit if isinstance(values_limit, int) else None,
-            value_column_index=(
-                value_column_index if isinstance(value_column_index, int) else None
-            ),
-        )
-        if resolved is None:
-            return ok(
-                {"error": f"Test not found for id: {test_id}", "valueColumns": []}
-            )
-        return ok(
-            {
-                "testId": test_id,
-                "count": len(resolved),
-                "strict": strict,
-                "includeValues": include_values,
-                "valuesLimit": values_limit if isinstance(values_limit, int) else None,
-                "valueColumnIndex": (
-                    value_column_index if isinstance(value_column_index, int) else None
-                ),
-                "valueColumns": resolved,
-            }
-        )
-
-    if name == "get_test_value_arrays":
-        test_id = arguments["test_id"]
-        strict = bool(arguments.get("strict", True))
         values_limit = arguments.get("values_limit")
         value_column_index = arguments.get("value_column_index")
         resolved = resolve_test_value_columns(
@@ -456,17 +386,20 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             ),
         )
         if resolved is None:
-            return ok({"error": f"Test not found for id: {test_id}", "valueArrays": []})
+            return ok(
+                {"error": f"Test not found for id: {test_id}", "valueColumns": []}
+            )
         return ok(
             {
                 "testId": test_id,
-                "strict": strict,
                 "count": len(resolved),
+                "strict": strict,
+                "includeValues": True,
                 "valuesLimit": values_limit if isinstance(values_limit, int) else None,
                 "valueColumnIndex": (
                     value_column_index if isinstance(value_column_index, int) else None
                 ),
-                "valueArrays": extract_value_arrays(resolved),
+                "valueColumns": resolved,
             }
         )
 

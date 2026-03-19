@@ -231,18 +231,15 @@ class MCPToolbox:
         description = tool.description
         if tool.public_name == "db_get_test_value_columns":
             description += (
-                " In this chat UI, if you set include_values=true, the returned value columns can be plotted for the user "
-                "in the right-side analysis panel. The raw values are not passed back into model context after the call; "
-                "instead you receive a compact summary with per-series min/max/mean/counts, while the client receives "
-                "a sampled plot payload rather than the full value arrays. Use include_values=true when the user asks "
-                "to visualize, inspect, or plot the returned curves."
-            )
-        if tool.public_name == "db_get_test_value_arrays":
-            description += (
-                " In this chat UI, calling this tool automatically shows the user a line plot of sampled array data. "
-                "The raw arrays are not passed back into model context after the call; instead you receive a compact "
-                "summary with per-line min/max/mean/counts, while the client receives a sampled plot payload rather "
-                "than the full arrays. After calling it, discuss the plotted result shown to the user."
+                " In this chat UI, this tool always returns plottable value data for the frontend. "
+                "The raw values are not passed back into model context after the call; instead you receive a compact "
+                "summary with per-series min/max/mean/counts, while the client receives a sampled plot payload. "
+                "Use this tool whenever the user asks to visualize, inspect, compare, or plot a test curve. "
+                "Prefer passing `value_column_index` when the user wants one specific curve or a focused plot, "
+                "because returning every value column for a test can produce an overloaded chart. "
+                "When calling it, `test_id` must preserve the exact surrounding curly braces. "
+                "The correct format is `{D1CB87C7-D89F-4583-9DA8-5372DC59F25A}` and the braces are part of the id. "
+                "Never remove the braces."
             )
         return description
 

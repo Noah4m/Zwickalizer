@@ -20,7 +20,8 @@ Answer directly and keep responses clear.
 Use tools only when they are genuinely needed.
 If the user asks for general knowledge or casual conversation, answer without using tools.
 If the user asks about stored test data, materials data, measurements, trends, or records, use the available MCP tools.
-If the user asks to inspect, compare, or plot a specific test's value columns or value arrays and no `test_id` is provided, ask exactly one brief clarifying question for the `test_id`.
+If the user asks to inspect, compare, or plot a specific test's value columns and no `test_id` is provided, ask exactly one brief clarifying question for the full `test_id`.
+When you ask for or use a `test_id`, preserve the exact surrounding curly braces. The correct format is `{D1CB87C7-D89F-4583-9DA8-5372DC59F25A}` and the braces are part of the id. Never remove the braces.
 If the user asks about stored tests or measurements and the request does not include a `test_id` or at least one retrieval filter such as `customer`, `material`, `testType`, `date`, `date_from`, or `date_to`, ask exactly one brief clarifying question before calling tools.
 If the request is ambiguous, ask at most one concise clarifying question instead of guessing.
 Do not invent tool results.
@@ -215,88 +216,6 @@ def _series_statistics(values: list[float | None]) -> dict[str, float | None]:
     }
 
 
-def summarize_value_arrays_tool(arguments: dict[str, Any], result: str) -> ToolExecutionResult:
-    payload = tool_result_payload(result)
-    parsed_result = payload.get("result")
-    if not isinstance(parsed_result, dict):
-        return ToolExecutionResult(model_payload=payload, client_result=parsed_result)
-
-    value_arrays = parsed_result.get("valueArrays")
-    if not isinstance(value_arrays, list):
-        return ToolExecutionResult(model_payload=payload, client_result=parsed_result)
-
-    series_summaries: list[dict[str, Any]] = []
-    client_series: list[dict[str, Any]] = []
-
-    for index, raw_array in enumerate(value_arrays):
-        values = raw_array if isinstance(raw_array, list) else []
-        plotted_values = [_safe_numeric(value) for value in values]
-        label = f"Result {index + 1}"
-        series_stats = _series_statistics(plotted_values)
-        sampled_series = _sample_series(plotted_values)
-
-        series_summaries.append(
-            {
-                "label": label,
-                "points": len(values),
-                "finitePoints": len([value for value in plotted_values if value is not None]),
-                "missingPoints": len([value for value in plotted_values if value is None]),
-                **series_stats,
-                "sampledPoints": sampled_series["sampledPoints"],
-                "sampledDown": sampled_series["sampledDown"],
-            }
-        )
-        client_series.append(
-            sanitize_json_value(
-                {
-                    "label": label,
-                    **sampled_series,
-                }
-            )
-        )
-
-    test_id = parsed_result.get("testId") or arguments.get("test_id")
-    strict = bool(parsed_result.get("strict", arguments.get("strict", True)))
-    values_limit = parsed_result.get("valuesLimit", arguments.get("values_limit"))
-
-    summarized_result = {
-        "testId": test_id,
-        "strict": strict,
-        "count": parsed_result.get("count", len(series_summaries)),
-        "valuesLimit": values_limit,
-        "plotShownToUser": True,
-        "sampling": {
-            "maxPoints": MAX_PLOT_POINTS,
-            "strategy": "deterministic_stride",
-        },
-        "note": (
-            "A line plot of sampled value arrays is already shown to the user. "
-            "Full arrays are intentionally omitted from the client payload and model context to keep the response small."
-        ),
-        "seriesSummaries": [
-            {
-                **summary,
-                "minText": _format_value(summary["min"]),
-                "maxText": _format_value(summary["max"]),
-                "meanText": _format_value(summary["mean"]),
-                "rangeText": _format_value(summary["range"]),
-                "firstFiniteText": _format_value(summary["firstFinite"]),
-                "lastFiniteText": _format_value(summary["lastFinite"]),
-            }
-            for summary in series_summaries
-        ],
-    }
-    client_result = {
-        **summarized_result,
-        "valueArrays": client_series,
-    }
-    return ToolExecutionResult(
-        model_payload={"result": summarized_result},
-        client_result=client_result,
-        analysis=[],
-    )
-
-
 def summarize_value_columns_tool(arguments: dict[str, Any], result: str) -> ToolExecutionResult:
     payload = tool_result_payload(result)
     parsed_result = payload.get("result")
@@ -360,7 +279,7 @@ def summarize_value_columns_tool(arguments: dict[str, Any], result: str) -> Tool
         return ToolExecutionResult(model_payload=payload, client_result=parsed_result)
 
     strict = bool(parsed_result.get("strict", arguments.get("strict", True)))
-    include_values = bool(parsed_result.get("includeValues", arguments.get("include_values", False)))
+    include_values = True
     values_limit = parsed_result.get("valuesLimit", arguments.get("values_limit"))
     test_id = parsed_result.get("testId") or arguments.get("test_id")
 
@@ -370,13 +289,13 @@ def summarize_value_columns_tool(arguments: dict[str, Any], result: str) -> Tool
         "includeValues": include_values,
         "count": parsed_result.get("count", len(client_value_columns)),
         "valuesLimit": values_limit,
-        "plotShownToUser": include_values,
+        "plotShownToUser": True,
         "sampling": {
             "maxPoints": MAX_PLOT_POINTS,
             "strategy": "deterministic_stride",
         },
         "note": (
-            "If values were requested, a line plot of sampled value columns is already shown to the user. "
+            "A line plot of sampled value columns is already shown to the user. "
             "Full values are intentionally omitted from the client payload and model context to keep the response small."
         ),
         "seriesSummaries": [
@@ -412,8 +331,6 @@ def summarize_value_columns_tool(arguments: dict[str, Any], result: str) -> Tool
 
 
 def execute_tool_for_chat(name: str, arguments: dict[str, Any], result: str) -> ToolExecutionResult:
-    if name == "db_get_test_value_arrays":
-        return summarize_value_arrays_tool(arguments, result)
     if name == "db_get_test_value_columns":
         return summarize_value_columns_tool(arguments, result)
     payload = tool_result_payload(result)

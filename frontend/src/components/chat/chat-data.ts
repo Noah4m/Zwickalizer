@@ -28,6 +28,7 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 const MAX_PLOT_POINTS = 1500;
+const MAX_PLOTTED_SERIES = 8;
 
 function sampleIndexes(length: number): number[] {
   if (length <= 0) {
@@ -91,119 +92,6 @@ function buildChartPoints(
   });
 }
 
-function buildValueArrayAnalysis(message: ChatMessage): AnalysisData[] | null {
-  const toolCall = [...(message.toolCalls ?? [])]
-    .reverse()
-    .find((entry) => entry.name === "db_get_test_value_arrays");
-
-  if (!toolCall || typeof toolCall.result !== "object" || toolCall.result === null) {
-    return null;
-  }
-
-  const result = toolCall.result as Record<string, unknown>;
-  const rawValueArrays = result.valueArrays;
-  if (!Array.isArray(rawValueArrays)) {
-    return null;
-  }
-  const seriesSummaries = Array.isArray(result.seriesSummaries)
-    ? result.seriesSummaries
-    : [];
-  const plottedSeries = rawValueArrays.map((entry, seriesIndex) => {
-    const key = `series_${seriesIndex + 1}`;
-    const summary = seriesSummaries[seriesIndex];
-    const fallbackLabel =
-      summary && typeof summary === "object" && typeof summary.label === "string"
-        ? summary.label
-        : `Result ${seriesIndex + 1}`;
-
-    if (typeof entry === "object" && entry !== null && !Array.isArray(entry)) {
-      const record = entry as Record<string, unknown>;
-      return {
-        key,
-        label: typeof record.label === "string" ? record.label : fallbackLabel,
-        points: normalizeSampledSeries(record.sampledIndices, record.sampledValues),
-      };
-    }
-
-    const values = Array.isArray(entry)
-      ? entry.map((value) => (isFiniteNumber(value) ? value : null))
-      : [];
-    const indexes = sampleIndexes(values.length);
-    return {
-      key,
-      label: fallbackLabel,
-      points: indexes.map((index) => ({ index, value: values[index] ?? null })),
-    };
-  });
-  const points = buildChartPoints(plottedSeries);
-  const longestSeries = Math.max(
-    0,
-    ...seriesSummaries.map((summary) =>
-      summary && typeof summary === "object" && typeof summary.points === "number"
-        ? summary.points
-        : 0,
-    ),
-    ...plottedSeries.map((series) => series.points.length),
-  );
-  const sampledDown = seriesSummaries.some(
-    (summary) =>
-      Boolean(
-        summary &&
-          typeof summary === "object" &&
-          "sampledDown" in summary &&
-          (summary as Record<string, unknown>).sampledDown,
-      ),
-  );
-  const sampledPointCount = Math.max(
-    0,
-    ...seriesSummaries.map((summary) =>
-      summary && typeof summary === "object" && typeof summary.sampledPoints === "number"
-        ? summary.sampledPoints
-        : 0,
-    ),
-    ...plottedSeries.map((series) => series.points.length),
-  );
-  const strict = Boolean(result.strict ?? true);
-  const valuesLimit =
-    typeof result.valuesLimit === "number" ? result.valuesLimit : null;
-  const testId = typeof result.testId === "string" ? result.testId : "Unknown";
-
-  return [
-    {
-      type: "stats",
-      title: "Value array plot summary",
-      data: [
-        { label: "Series", value: String(plottedSeries.length), delta: "plotted" },
-        { label: "Longest line", value: String(longestSeries), delta: "points" },
-        { label: "Mode", value: strict ? "Strict" : "Loose", delta: "matching" },
-        {
-          label: "Limit",
-          value: valuesLimit === null ? "Full" : String(valuesLimit),
-          delta: valuesLimit === null ? "returned" : "per line",
-        },
-      ],
-    },
-    {
-      type: "chart",
-      title: "Test value arrays",
-      subtitle:
-        sampledDown
-          ? `Test ${testId}. Each returned value array is shown as a sampled line over the original sample index. ${sampledPointCount} points per series were kept for plotting.`
-          : `Test ${testId}. Each returned value array is shown as a separate line over sample index.`,
-      data: {
-        kind: "line",
-        xKey: "index",
-        yAxisLabel: "Value",
-        points,
-        series: plottedSeries.map((series) => ({
-          key: series.key,
-          label: series.label,
-        })),
-      },
-    },
-  ];
-}
-
 function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null {
   const toolCall = [...(message.toolCalls ?? [])]
     .reverse()
@@ -261,6 +149,9 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
     return null;
   }
 
+  const visibleColumns = plottedColumns.slice(0, MAX_PLOTTED_SERIES);
+  const hiddenSeriesCount = Math.max(0, plottedColumns.length - visibleColumns.length);
+
   const longestSeries = Math.max(
     0,
     ...seriesSummaries.map((summary) =>
@@ -268,10 +159,10 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
         ? summary.points
         : 0,
     ),
-    ...plottedColumns.map((column) => column.points.length),
+    ...visibleColumns.map((column) => column.points.length),
   );
   const points = buildChartPoints(
-    plottedColumns.map((column, seriesIndex) => ({
+    visibleColumns.map((column, seriesIndex) => ({
       key: `series_${seriesIndex + 1}`,
       points: column.points,
     })),
@@ -292,7 +183,7 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
         ? summary.sampledPoints
         : 0,
     ),
-    ...plottedColumns.map((column) => column.points.length),
+    ...visibleColumns.map((column) => column.points.length),
   );
 
   const strict = Boolean(result.strict ?? true);
@@ -300,11 +191,11 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
     typeof result.valuesLimit === "number" ? result.valuesLimit : null;
   const testId = typeof result.testId === "string" ? result.testId : "Unknown";
   const sharedUnitTableId =
-    plottedColumns.length > 0 &&
-    plottedColumns.every((column) => column.unitTableId === plottedColumns[0].unitTableId)
-      ? plottedColumns[0].unitTableId
+    visibleColumns.length > 0 &&
+    visibleColumns.every((column) => column.unitTableId === visibleColumns[0].unitTableId)
+      ? visibleColumns[0].unitTableId
       : undefined;
-  const signalLabel = plottedColumns[0]?.label ?? "Value columns";
+  const signalLabel = visibleColumns[0]?.label ?? "Value columns";
   const summaryStats = seriesSummaries
     .map((summary) =>
       summary && typeof summary === "object" ? (summary as Record<string, unknown>) : null,
@@ -316,7 +207,7 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
   const summaryMinValues = summaryStats
     .map((summary) => summary.min)
     .filter((value): value is number => isFiniteNumber(value));
-  const sampledValues = plottedColumns
+  const sampledValues = visibleColumns
     .flatMap((column) => column.points.map((point) => point.value))
     .filter((value): value is number => value !== null && isFiniteNumber(value));
   const maxVal = summaryMaxValues.length > 0
@@ -345,15 +236,17 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
       type: "chart",
       title: "Test value columns",
       subtitle:
-        sampledDown
-          ? `Test ${testId}. Each returned value column is shown as a sampled line over the original sample index. ${sampledPointCount} points per series were kept for plotting.`
-          : `Test ${testId}. Each returned value column is shown as a separate line over sample index.`,
+        hiddenSeriesCount > 0
+          ? `Test ${testId}. Showing the first ${visibleColumns.length} of ${plottedColumns.length} returned value columns to keep the chart readable. ${sampledPointCount} points per visible series were kept for plotting.`
+          : sampledDown
+            ? `Test ${testId}. Each returned value column is shown as a sampled line over the original sample index. ${sampledPointCount} points per series were kept for plotting.`
+            : `Test ${testId}. Each returned value column is shown as a separate line over sample index.`,
       data: {
         kind: "line",
         xKey: "index",
         yAxisLabel: sharedUnitTableId ?? "Value",
         points,
-        series: plottedColumns.map((column, seriesIndex) => ({
+        series: visibleColumns.map((column, seriesIndex) => ({
           key: `series_${seriesIndex + 1}`,
           label: column.label,
         })),
@@ -372,11 +265,6 @@ export function deriveAnalysisData(messages: ChatMessage[]): AnalysisData[] {
   const toolDerivedValueColumnsAnalysis = buildValueColumnsAnalysis(latestAssistantMessage);
   if (toolDerivedValueColumnsAnalysis) {
     return toolDerivedValueColumnsAnalysis;
-  }
-
-  const toolDerivedAnalysis = buildValueArrayAnalysis(latestAssistantMessage);
-  if (toolDerivedAnalysis) {
-    return toolDerivedAnalysis;
   }
 
   if (latestAssistantMessage.analysis && latestAssistantMessage.analysis.length > 0) {

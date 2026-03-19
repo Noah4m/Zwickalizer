@@ -61,9 +61,7 @@ function normalizeSampledSeries(
   sampledValues: unknown,
 ): Array<{ index: number; value: number | null }> {
   const indexes = Array.isArray(sampledIndices)
-    ? sampledIndices.filter(
-        (value): value is number => Number.isInteger(value) && value >= 0,
-      )
+    ? sampledIndices.filter((value): value is number => Number.isInteger(value) && value >= 0)
     : [];
   const values = Array.isArray(sampledValues)
     ? sampledValues.map((value) => (isFiniteNumber(value) ? value : null))
@@ -107,7 +105,6 @@ function buildValueArrayAnalysis(message: ChatMessage): AnalysisData[] | null {
   if (!Array.isArray(rawValueArrays)) {
     return null;
   }
-
   const seriesSummaries = Array.isArray(result.seriesSummaries)
     ? result.seriesSummaries
     : [];
@@ -138,7 +135,6 @@ function buildValueArrayAnalysis(message: ChatMessage): AnalysisData[] | null {
       points: indexes.map((index) => ({ index, value: values[index] ?? null })),
     };
   });
-
   const points = buildChartPoints(plottedSeries);
   const longestSeries = Math.max(
     0,
@@ -161,9 +157,7 @@ function buildValueArrayAnalysis(message: ChatMessage): AnalysisData[] | null {
   const sampledPointCount = Math.max(
     0,
     ...seriesSummaries.map((summary) =>
-      summary &&
-      typeof summary === "object" &&
-      typeof summary.sampledPoints === "number"
+      summary && typeof summary === "object" && typeof summary.sampledPoints === "number"
         ? summary.sampledPoints
         : 0,
     ),
@@ -192,9 +186,10 @@ function buildValueArrayAnalysis(message: ChatMessage): AnalysisData[] | null {
     {
       type: "chart",
       title: "Test value arrays",
-      subtitle: sampledDown
-        ? `Test ${testId}. Each returned value array is shown as a sampled line over the original sample index. ${sampledPointCount} points per series were kept for plotting.`
-        : `Test ${testId}. Each returned value array is shown as a separate line over sample index.`,
+      subtitle:
+        sampledDown
+          ? `Test ${testId}. Each returned value array is shown as a sampled line over the original sample index. ${sampledPointCount} points per series were kept for plotting.`
+          : `Test ${testId}. Each returned value array is shown as a separate line over sample index.`,
       data: {
         kind: "line",
         xKey: "index",
@@ -223,17 +218,12 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
   if (!Array.isArray(rawValueColumns)) {
     return null;
   }
-
   const seriesSummaries = Array.isArray(result.seriesSummaries)
     ? result.seriesSummaries
     : [];
 
   const plottedColumns = rawValueColumns
-    .map((entry) =>
-      typeof entry === "object" && entry !== null
-        ? (entry as Record<string, unknown>)
-        : null,
-    )
+    .map((entry) => (typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : null))
     .filter((entry): entry is Record<string, unknown> => entry !== null)
     .map((entry, index) => {
       const summary = seriesSummaries[index];
@@ -262,8 +252,7 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
                     : null,
                 }))
               : [],
-        unitTableId:
-          typeof entry.unitTableId === "string" ? entry.unitTableId : undefined,
+        unitTableId: typeof entry.unitTableId === "string" ? entry.unitTableId : undefined,
       };
     })
     .filter((entry) => entry.points.length > 0);
@@ -299,14 +288,16 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
   const sampledPointCount = Math.max(
     0,
     ...seriesSummaries.map((summary) =>
-      summary &&
-      typeof summary === "object" &&
-      typeof summary.sampledPoints === "number"
+      summary && typeof summary === "object" && typeof summary.sampledPoints === "number"
         ? summary.sampledPoints
         : 0,
     ),
     ...plottedColumns.map((column) => column.points.length),
   );
+
+  const strict = Boolean(result.strict ?? true);
+  const valuesLimit =
+    typeof result.valuesLimit === "number" ? result.valuesLimit : null;
   const testId = typeof result.testId === "string" ? result.testId : "Unknown";
   const sharedUnitTableId =
     plottedColumns.length > 0 &&
@@ -328,18 +319,16 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
   const sampledValues = plottedColumns
     .flatMap((column) => column.points.map((point) => point.value))
     .filter((value): value is number => value !== null && isFiniteNumber(value));
-  const maxVal =
-    summaryMaxValues.length > 0
-      ? Math.max(...summaryMaxValues)
-      : sampledValues.length > 0
-        ? Math.max(...sampledValues)
-        : null;
-  const minVal =
-    summaryMinValues.length > 0
-      ? Math.min(...summaryMinValues)
-      : sampledValues.length > 0
-        ? Math.min(...sampledValues)
-        : null;
+  const maxVal = summaryMaxValues.length > 0
+    ? Math.max(...summaryMaxValues)
+    : sampledValues.length > 0
+      ? Math.max(...sampledValues)
+      : null;
+  const minVal = summaryMinValues.length > 0
+    ? Math.min(...summaryMinValues)
+    : sampledValues.length > 0
+      ? Math.min(...sampledValues)
+      : null;
 
   return [
     {
@@ -348,24 +337,17 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
       data: [
         { label: "Signal", value: signalLabel, delta: "connected" },
         { label: "Points", value: String(longestSeries), delta: "total samples" },
-        {
-          label: "Max",
-          value: maxVal !== null ? formatValue(maxVal) : "—",
-          delta: "breakpoint",
-        },
-        {
-          label: "Min",
-          value: minVal !== null ? formatValue(minVal) : "—",
-          delta: "lowest recorded",
-        },
+        { label: "Max", value: maxVal !== null ? formatValue(maxVal) : "—", delta: "breakpoint" },
+        { label: "Min", value: minVal !== null ? formatValue(minVal) : "—", delta: "lowest recorded" },
       ],
     },
     {
       type: "chart",
       title: "Test value columns",
-      subtitle: sampledDown
-        ? `Test ${testId}. Each returned value column is shown as a sampled line over the original sample index. ${sampledPointCount} points per series were kept for plotting.`
-        : `Test ${testId}. Each returned value column is shown as a separate line over sample index.`,
+      subtitle:
+        sampledDown
+          ? `Test ${testId}. Each returned value column is shown as a sampled line over the original sample index. ${sampledPointCount} points per series were kept for plotting.`
+          : `Test ${testId}. Each returned value column is shown as a separate line over sample index.`,
       data: {
         kind: "line",
         xKey: "index",
@@ -381,17 +363,13 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
 }
 
 export function deriveAnalysisData(messages: ChatMessage[]): AnalysisData[] {
-  const latestAssistantMessage = [...messages]
-    .reverse()
-    .find((message) => message.role === "assistant");
+  const latestAssistantMessage = [...messages].reverse().find((message) => message.role === "assistant");
 
   if (!latestAssistantMessage) {
     return [];
   }
 
-  const toolDerivedValueColumnsAnalysis = buildValueColumnsAnalysis(
-    latestAssistantMessage,
-  );
+  const toolDerivedValueColumnsAnalysis = buildValueColumnsAnalysis(latestAssistantMessage);
   if (toolDerivedValueColumnsAnalysis) {
     return toolDerivedValueColumnsAnalysis;
   }

@@ -8,10 +8,12 @@ services:
       AGENT_PORT: 8003
       MONGO_URI: mongodb://host.docker.internal:27017
       MONGO_DB: txp_clean
+      MCP_SERVER_ROOT: /mcp-server
     ports:
       - "8003:8003"
     volumes:
       - ./agent:/app
+      - ./mcp-server:/mcp-server
     networks:
       - matai-net
     extra_hosts:
@@ -24,6 +26,7 @@ services:
     environment:
       AGENT_URL: http://agent:8003
       BACKEND_PORT: 8000
+      MONGO_URI: mongodb://txp-database:27017
     ports:
       - "8000:8000"
     volumes:
@@ -49,3 +52,6 @@ services:
 networks:
   matai-net:
     driver: bridge
+
+volumes:
+  mongo_data:

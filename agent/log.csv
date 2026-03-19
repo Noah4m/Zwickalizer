@@ -21,10 +21,7 @@ timestamp_utc,event_type,details,status,message
 2026-03-19T09:56:10.030094+00:00,chat_response,"{""message"": ""11981"", ""history_length"": 5}",success,No matching tests found
 2026-03-19T09:59:06.474646+00:00,chat_request,"{""message"": ""test"", ""history_length"": 1}",started,Incoming chat request
 2026-03-19T09:59:06.966369+00:00,chat_response,"{""message"": ""test"", ""history_length"": 1}",success,No matching tests found
-2026-03-19T10:24:50.905408+00:00,chat_request,"{""message"": ""Give me a summary for Test 3"", ""history_length"": 0}",started,Incoming chat request
-2026-03-19T10:25:59.251701+00:00,chat_request,"{""message"": ""Give me a summary for Test 3"", ""history_length"": 0}",started,Incoming chat request
-2026-03-19T10:31:11.272850+00:00,chat_request,"{""message"": ""Give me a summary for Test 3"", ""history_length"": 0}",started,Incoming chat request
-2026-03-19T10:33:08.695119+00:00,chat_request,"{""message"": ""hi"", ""history_length"": 0}",started,Incoming chat request
-2026-03-19T10:34:09.357645+00:00,chat_request,"{""message"": ""Give me a summary for Test 3"", ""history_length"": 0}",started,Incoming chat request
-2026-03-19T10:39:28.674255+00:00,chat_request,"{""message"": ""Give me a summary for Test 3"", ""history_length"": 0}",started,Incoming chat request
-2026-03-19T10:39:32.749575+00:00,chat_response,"{""message"": ""Give me a summary for Test 3"", ""role"": ""engineer"", ""history_length"": 0, ""db_available"": false}",success,"The test database is not reachable right now, so I cannot query live results. Please check the MongoDB connection and try again."
+2026-03-19T10:48:53.241082+00:00,chat_request,"{""message"": ""Give me a summary for Test 3"", ""history_length"": 0}",started,Incoming chat request
+2026-03-19T10:48:57.486306+00:00,chat_response,"{""message"": ""Give me a summary for Test 3"", ""role"": ""engineer"", ""history_length"": 0, ""db_available"": false}",success,"The test database is not reachable right now, so I cannot query live results. Please check the MongoDB connection and try again."
+2026-03-19T10:51:28.214718+00:00,chat_request,"{""message"": ""Give me a summary for Test 3"", ""history_length"": 0}",started,Incoming chat request
+2026-03-19T10:51:32.248563+00:00,chat_response,"{""message"": ""Give me a summary for Test 3"", ""role"": ""engineer"", ""history_length"": 0, ""db_available"": false}",success,"The test database is not reachable right now, so I cannot query live results. Please check the MongoDB connection and try again."

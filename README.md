@@ -23,3 +23,9 @@ Required environment variable:
 ```bash
 GEMINI_API_KEY=your-gemini-api-key
 ```
+
+
+## MongoDB Connect
+```bash
+docker network connect matai-net txp-database
+```

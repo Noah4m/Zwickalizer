@@ -11,6 +11,7 @@ export default defineConfig({
       "/api": "http://backend:8000",
     },
   },
+  
   test: {
     environment: "jsdom",
     globals: true,

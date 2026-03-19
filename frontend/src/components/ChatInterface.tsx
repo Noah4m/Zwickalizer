@@ -100,7 +100,9 @@ export default function ChatInterface() {
     setLoading(true);
 
     try {
+      console.log("Backend URL:", BACKEND);
       if (BACKEND) {
+        console.log("Sending request to backend with history:", [...history, userMsg]);
         const res = await fetch(`${BACKEND}/api/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },

@@ -22,14 +22,20 @@ describe("deriveAnalysisData", () => {
               strict: true,
               includeValues: true,
               valuesLimit: null,
+              seriesSummaries: [
+                { label: "Force", points: 3, sampledPoints: 3, sampledDown: false },
+                { label: "Strain", points: 3, sampledPoints: 3, sampledDown: false },
+              ],
               valueColumns: [
                 {
                   name: "Force",
-                  values: [1, 2, 3],
+                  sampledIndices: [0, 1, 2],
+                  sampledValues: [1, 2, 3],
                 },
                 {
                   name: "Strain",
-                  values: [4, 5, 6],
+                  sampledIndices: [0, 1, 2],
+                  sampledValues: [4, 5, 6],
                 },
               ],
             },
@@ -74,8 +80,14 @@ describe("deriveAnalysisData", () => {
               testId: "T-500",
               strict: true,
               valuesLimit: null,
-              seriesSummaries: [{ label: "Result 1", min: 1, max: 3 }],
-              valueArrays: [[1, 2, 3]],
+              seriesSummaries: [{ label: "Result 1", min: 1, max: 3, points: 3, sampledPoints: 3, sampledDown: false }],
+              valueArrays: [
+                {
+                  label: "Result 1",
+                  sampledIndices: [0, 1, 2],
+                  sampledValues: [1, 2, 3],
+                },
+              ],
             },
           },
         ],

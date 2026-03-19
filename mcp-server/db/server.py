@@ -23,6 +23,7 @@ The server communicates over stdio — connect it from your MCP client config:
 import os
 import json
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 from pymongo import MongoClient
 from pymongo.collection import Collection
@@ -51,6 +52,53 @@ tests_col: Collection = db["_tests"]
 values_col: Collection = db["valuecolumns_migrated"]
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def parse_iso_date(value: str | None) -> datetime | None:
+    if not value or not isinstance(value, str):
+        return None
+
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _is_date_only(value: str | None) -> bool:
+    return isinstance(value, str) and "T" not in value and " " not in value
+
+
+def build_test_date_filter(
+    date_value: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> dict:
+    if date_value:
+        start = parse_iso_date(date_value)
+        if start is None:
+            return {}
+        if _is_date_only(date_value):
+            return {"$gte": start, "$lt": start + timedelta(days=1)}
+        return {"$gte": start, "$lte": start}
+
+    filt: dict = {}
+    start = parse_iso_date(date_from)
+    end = parse_iso_date(date_to)
+
+    if start is not None:
+        filt["$gte"] = start
+    if end is not None:
+        if _is_date_only(date_to):
+            filt["$lt"] = end + timedelta(days=1)
+        else:
+            filt["$lte"] = end
+    return filt
 
 
 def resolve_column(test_id: str, value_column: dict) -> list[float]:
@@ -169,13 +217,25 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="find_tests",
-            description="Find tests for given filters (test type, date, customer, material)",
+            description="Find tests for given filters such as test type, customer, material, and exact date or date range.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "testType": {"type": "string"},
                     "customer": {"type": "string"},
                     "material": {"type": "string"},
+                    "date": {
+                        "type": "string",
+                        "description": "Exact ISO date such as '2026-03-19'. Matches the full UTC day.",
+                    },
+                    "date_from": {
+                        "type": "string",
+                        "description": "Inclusive ISO start date or datetime such as '2026-03-01'.",
+                    },
+                    "date_to": {
+                        "type": "string",
+                        "description": "Inclusive ISO end date or datetime such as '2026-03-19'.",
+                    },
                 },
             },
         ),
@@ -278,6 +338,13 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             filters["TestParametersFlat.CUSTOMER"] = arguments["customer"]
         if "material" in arguments:
             filters["TestParametersFlat.MATERIAL"] = arguments["material"]
+        date_filter = build_test_date_filter(
+            arguments.get("date"),
+            arguments.get("date_from"),
+            arguments.get("date_to"),
+        )
+        if date_filter:
+            filters["TestParametersFlat.date"] = date_filter
 
         cursor = (
             tests_col.find(filters, META_PROJ)

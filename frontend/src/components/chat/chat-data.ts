@@ -56,6 +56,43 @@ function formatValue(value: number): string {
   return value.toPrecision(5);
 }
 
+function normalizeSampledSeries(
+  sampledIndices: unknown,
+  sampledValues: unknown,
+): Array<{ index: number; value: number | null }> {
+  const indexes = Array.isArray(sampledIndices)
+    ? sampledIndices.filter(
+        (value): value is number => Number.isInteger(value) && value >= 0,
+      )
+    : [];
+  const values = Array.isArray(sampledValues)
+    ? sampledValues.map((value) => (isFiniteNumber(value) ? value : null))
+    : [];
+  const pairCount = Math.min(indexes.length, values.length);
+
+  return Array.from({ length: pairCount }, (_, index) => ({
+    index: indexes[index],
+    value: values[index],
+  }));
+}
+
+function buildChartPoints(
+  series: Array<{ key: string; points: Array<{ index: number; value: number | null }> }>,
+) {
+  const allIndexes = Array.from(
+    new Set(series.flatMap((entry) => entry.points.map((point) => point.index))),
+  ).sort((left, right) => left - right);
+
+  return allIndexes.map((index) => {
+    const point: Record<string, string | number | null> = { index };
+    series.forEach((entry) => {
+      point[entry.key] =
+        entry.points.find((item) => item.index === index)?.value ?? null;
+    });
+    return point;
+  });
+}
+
 function buildValueArrayAnalysis(message: ChatMessage): AnalysisData[] | null {
   const toolCall = [...(message.toolCalls ?? [])]
     .reverse()
@@ -74,54 +111,99 @@ function buildValueArrayAnalysis(message: ChatMessage): AnalysisData[] | null {
   const seriesSummaries = Array.isArray(result.seriesSummaries)
     ? result.seriesSummaries
     : [];
+  const plottedSeries = rawValueArrays.map((entry, seriesIndex) => {
+    const key = `series_${seriesIndex + 1}`;
+    const summary = seriesSummaries[seriesIndex];
+    const fallbackLabel =
+      summary && typeof summary === "object" && typeof summary.label === "string"
+        ? summary.label
+        : `Result ${seriesIndex + 1}`;
 
-  const plottedArrays = rawValueArrays.map((entry) =>
-    Array.isArray(entry)
+    if (typeof entry === "object" && entry !== null && !Array.isArray(entry)) {
+      const record = entry as Record<string, unknown>;
+      return {
+        key,
+        label: typeof record.label === "string" ? record.label : fallbackLabel,
+        points: normalizeSampledSeries(record.sampledIndices, record.sampledValues),
+      };
+    }
+
+    const values = Array.isArray(entry)
       ? entry.map((value) => (isFiniteNumber(value) ? value : null))
-      : [],
-  );
-
-  const longestSeries = plottedArrays.reduce(
-    (max, values) => Math.max(max, values.length),
-    0,
-  );
-  const sampledIndexes = sampleIndexes(longestSeries);
-
-  const points = sampledIndexes.map((index) => {
-    const point: Record<string, string | number | null> = { index };
-    plottedArrays.forEach((values, seriesIndex) => {
-      point[`series_${seriesIndex + 1}`] = values[index] ?? null;
-    });
-    return point;
+      : [];
+    const indexes = sampleIndexes(values.length);
+    return {
+      key,
+      label: fallbackLabel,
+      points: indexes.map((index) => ({ index, value: values[index] ?? null })),
+    };
   });
 
+  const points = buildChartPoints(plottedSeries);
+  const longestSeries = Math.max(
+    0,
+    ...seriesSummaries.map((summary) =>
+      summary && typeof summary === "object" && typeof summary.points === "number"
+        ? summary.points
+        : 0,
+    ),
+    ...plottedSeries.map((series) => series.points.length),
+  );
+  const sampledDown = seriesSummaries.some(
+    (summary) =>
+      Boolean(
+        summary &&
+          typeof summary === "object" &&
+          "sampledDown" in summary &&
+          (summary as Record<string, unknown>).sampledDown,
+      ),
+  );
+  const sampledPointCount = Math.max(
+    0,
+    ...seriesSummaries.map((summary) =>
+      summary &&
+      typeof summary === "object" &&
+      typeof summary.sampledPoints === "number"
+        ? summary.sampledPoints
+        : 0,
+    ),
+    ...plottedSeries.map((series) => series.points.length),
+  );
+  const strict = Boolean(result.strict ?? true);
+  const valuesLimit =
+    typeof result.valuesLimit === "number" ? result.valuesLimit : null;
   const testId = typeof result.testId === "string" ? result.testId : "Unknown";
 
   return [
     {
+      type: "stats",
+      title: "Value array plot summary",
+      data: [
+        { label: "Series", value: String(plottedSeries.length), delta: "plotted" },
+        { label: "Longest line", value: String(longestSeries), delta: "points" },
+        { label: "Mode", value: strict ? "Strict" : "Loose", delta: "matching" },
+        {
+          label: "Limit",
+          value: valuesLimit === null ? "Full" : String(valuesLimit),
+          delta: valuesLimit === null ? "returned" : "per line",
+        },
+      ],
+    },
+    {
       type: "chart",
       title: "Test value arrays",
-      subtitle:
-        sampledIndexes.length === longestSeries
-          ? `Test ${testId}. Each returned value array is shown as a separate line over sample index.`
-          : `Test ${testId}. The frontend deterministically samples ${sampledIndexes.length} of ${longestSeries} points for plotting while preserving the raw array for the tool result.`,
+      subtitle: sampledDown
+        ? `Test ${testId}. Each returned value array is shown as a sampled line over the original sample index. ${sampledPointCount} points per series were kept for plotting.`
+        : `Test ${testId}. Each returned value array is shown as a separate line over sample index.`,
       data: {
         kind: "line",
         xKey: "index",
         yAxisLabel: "Value",
         points,
-        series: plottedArrays.map((_, seriesIndex) => {
-          const summary = seriesSummaries[seriesIndex];
-          const label =
-            summary && typeof summary === "object" && typeof summary.label === "string"
-              ? summary.label
-              : `Result ${seriesIndex + 1}`;
-
-          return {
-            key: `series_${seriesIndex + 1}`,
-            label,
-          };
-        }),
+        series: plottedSeries.map((series) => ({
+          key: series.key,
+          label: series.label,
+        })),
       },
     },
   ];
@@ -165,52 +247,99 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
           typeof summaryLabel === "string" && summaryLabel.trim().length > 0
             ? summaryLabel
             : typeof entry.name === "string" && entry.name.trim().length > 0
-            ? entry.name
-            : typeof entry.childId === "string" && entry.childId.trim().length > 0
-            ? entry.childId
-            : "Value column",
-        values: Array.isArray(entry.values)
-          ? entry.values.map((value) => (isFiniteNumber(value) ? value : null))
-          : [],
+              ? entry.name
+              : typeof entry.childId === "string" && entry.childId.trim().length > 0
+                ? entry.childId
+                : "Value column",
+        points:
+          Array.isArray(entry.sampledIndices) && Array.isArray(entry.sampledValues)
+            ? normalizeSampledSeries(entry.sampledIndices, entry.sampledValues)
+            : Array.isArray(entry.values)
+              ? sampleIndexes(entry.values.length).map((sampleIndex) => ({
+                  index: sampleIndex,
+                  value: isFiniteNumber(entry.values[sampleIndex])
+                    ? (entry.values[sampleIndex] as number)
+                    : null,
+                }))
+              : [],
         unitTableId:
           typeof entry.unitTableId === "string" ? entry.unitTableId : undefined,
       };
     })
-    .filter((entry) => entry.values.length > 0);
+    .filter((entry) => entry.points.length > 0);
 
   if (plottedColumns.length === 0) {
     return null;
   }
 
-  const longestSeries = plottedColumns.reduce(
-    (max, column) => Math.max(max, column.values.length),
+  const longestSeries = Math.max(
     0,
+    ...seriesSummaries.map((summary) =>
+      summary && typeof summary === "object" && typeof summary.points === "number"
+        ? summary.points
+        : 0,
+    ),
+    ...plottedColumns.map((column) => column.points.length),
   );
-  const sampledIndexes = sampleIndexes(longestSeries);
-
-  const points = sampledIndexes.map((index) => {
-    const point: Record<string, string | number | null> = { index };
-    plottedColumns.forEach((column, seriesIndex) => {
-      point[`series_${seriesIndex + 1}`] = column.values[index] ?? null;
-    });
-    return point;
-  });
-
+  const points = buildChartPoints(
+    plottedColumns.map((column, seriesIndex) => ({
+      key: `series_${seriesIndex + 1}`,
+      points: column.points,
+    })),
+  );
+  const sampledDown = seriesSummaries.some(
+    (summary) =>
+      Boolean(
+        summary &&
+          typeof summary === "object" &&
+          "sampledDown" in summary &&
+          (summary as Record<string, unknown>).sampledDown,
+      ),
+  );
+  const sampledPointCount = Math.max(
+    0,
+    ...seriesSummaries.map((summary) =>
+      summary &&
+      typeof summary === "object" &&
+      typeof summary.sampledPoints === "number"
+        ? summary.sampledPoints
+        : 0,
+    ),
+    ...plottedColumns.map((column) => column.points.length),
+  );
   const testId = typeof result.testId === "string" ? result.testId : "Unknown";
   const sharedUnitTableId =
     plottedColumns.length > 0 &&
     plottedColumns.every((column) => column.unitTableId === plottedColumns[0].unitTableId)
       ? plottedColumns[0].unitTableId
       : undefined;
-
   const signalLabel = plottedColumns[0]?.label ?? "Value columns";
-
-  const allValues = plottedColumns
-    .flatMap((col) => col.values)
-    .filter((v): v is number => v !== null && isFiniteNumber(v));
-
-  const maxVal = allValues.length > 0 ? Math.max(...allValues) : null;
-  const minVal = allValues.length > 0 ? Math.min(...allValues) : null;
+  const summaryStats = seriesSummaries
+    .map((summary) =>
+      summary && typeof summary === "object" ? (summary as Record<string, unknown>) : null,
+    )
+    .filter((summary): summary is Record<string, unknown> => summary !== null);
+  const summaryMaxValues = summaryStats
+    .map((summary) => summary.max)
+    .filter((value): value is number => isFiniteNumber(value));
+  const summaryMinValues = summaryStats
+    .map((summary) => summary.min)
+    .filter((value): value is number => isFiniteNumber(value));
+  const sampledValues = plottedColumns
+    .flatMap((column) => column.points.map((point) => point.value))
+    .filter((value): value is number => value !== null && isFiniteNumber(value));
+  const maxVal =
+    summaryMaxValues.length > 0
+      ? Math.max(...summaryMaxValues)
+      : sampledValues.length > 0
+        ? Math.max(...sampledValues)
+        : null;
+  const minVal =
+    summaryMinValues.length > 0
+      ? Math.min(...summaryMinValues)
+      : sampledValues.length > 0
+        ? Math.min(...sampledValues)
+        : null;
 
   return [
     {
@@ -219,17 +348,24 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
       data: [
         { label: "Signal", value: signalLabel, delta: "connected" },
         { label: "Points", value: String(longestSeries), delta: "total samples" },
-        { label: "Max", value: maxVal !== null ? formatValue(maxVal) : "—", delta: "breakpoint" },
-        { label: "Min", value: minVal !== null ? formatValue(minVal) : "—", delta: "lowest recorded" },
+        {
+          label: "Max",
+          value: maxVal !== null ? formatValue(maxVal) : "—",
+          delta: "breakpoint",
+        },
+        {
+          label: "Min",
+          value: minVal !== null ? formatValue(minVal) : "—",
+          delta: "lowest recorded",
+        },
       ],
     },
     {
       type: "chart",
       title: "Test value columns",
-      subtitle:
-        sampledIndexes.length === longestSeries
-          ? `Test ${testId}. Each returned value column is shown as a separate line over sample index.`
-          : `Test ${testId}. The frontend deterministically samples ${sampledIndexes.length} of ${longestSeries} points for plotting while preserving the raw values in the tool result.`,
+      subtitle: sampledDown
+        ? `Test ${testId}. Each returned value column is shown as a sampled line over the original sample index. ${sampledPointCount} points per series were kept for plotting.`
+        : `Test ${testId}. Each returned value column is shown as a separate line over sample index.`,
       data: {
         kind: "line",
         xKey: "index",
@@ -253,7 +389,9 @@ export function deriveAnalysisData(messages: ChatMessage[]): AnalysisData[] {
     return [];
   }
 
-  const toolDerivedValueColumnsAnalysis = buildValueColumnsAnalysis(latestAssistantMessage);
+  const toolDerivedValueColumnsAnalysis = buildValueColumnsAnalysis(
+    latestAssistantMessage,
+  );
   if (toolDerivedValueColumnsAnalysis) {
     return toolDerivedValueColumnsAnalysis;
   }

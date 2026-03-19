@@ -2,8 +2,9 @@
 import json
 import logging
 import math
+import statistics
 from dataclasses import dataclass, field
-from typing import Any, Callable, List
+from typing import Any, Callable
 
 import openai
 from openai import OpenAI
@@ -19,9 +20,21 @@ Answer directly and keep responses clear.
 Use tools only when they are genuinely needed.
 If the user asks for general knowledge or casual conversation, answer without using tools.
 If the user asks about stored test data, materials data, measurements, trends, or records, use the available MCP tools.
+If the user asks to inspect, compare, or plot a specific test's value columns or value arrays and no `test_id` is provided, ask exactly one brief clarifying question for the `test_id`.
+If the user asks about stored tests or measurements and the request does not include a `test_id` or at least one retrieval filter such as `customer`, `material`, `testType`, `date`, `date_from`, or `date_to`, ask exactly one brief clarifying question before calling tools.
+If the request is ambiguous, ask at most one concise clarifying question instead of guessing.
 Do not invent tool results.
-IMPORTANT: Only answer once the question is fully answered!!!
 """
+
+FINAL_ANSWER_PROMPT = """You already have the tool results.
+Answer the user's latest request now.
+Do not call any more tools.
+Do not say that you are retrieving data or ask the user to wait.
+If no matching records were found, say that explicitly.
+If plot data was returned, describe the visible trend, range, or comparison using the summarized tool output.
+"""
+
+MAX_PLOT_POINTS = 1500
 
 
 def audience_instruction(role: str | None) -> str:
@@ -36,16 +49,15 @@ def audience_instruction(role: str | None) -> str:
     )
 
 
-def format_history(history: List[dict]) -> str:
-    lines: list[str] = []
+def history_messages(history: list[dict[str, Any]]) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
     for item in history:
-        role = item.get("role", "user")
+        role = item.get("role")
         content = str(item.get("content", "")).strip()
-        if not content:
+        if role not in {"system", "user", "assistant"} or not content:
             continue
-        speaker = "Assistant" if role == "assistant" else "User"
-        lines.append(f"{speaker}: {content}")
-    return "\n".join(lines) if lines else "No prior conversation."
+        messages.append({"role": role, "content": content})
+    return messages
 
 
 def extract_text(response: Any) -> str:
@@ -139,26 +151,6 @@ class ToolExecutionResult:
     analysis: list[dict[str, Any]] = field(default_factory=list)
 
 
-def looks_incomplete_after_tools(text: str) -> bool:
-    normalized = " ".join(text.lower().split())
-    if not normalized:
-        return True
-
-    incomplete_markers = (
-        "please hold on",
-        "one moment",
-        "please wait",
-        "i will now retrieve",
-        "i'll now retrieve",
-        "i will retrieve",
-        "i'll retrieve",
-        "let me retrieve",
-        "fetching the data",
-        "retrieving the data",
-    )
-    return any(marker in normalized for marker in incomplete_markers)
-
-
 def _safe_numeric(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -174,6 +166,55 @@ def _format_value(value: float | None) -> str:
     return f"{value:.6g}"
 
 
+def _sample_indexes(length: int, max_points: int = MAX_PLOT_POINTS) -> list[int]:
+    if length <= 0:
+        return []
+    if length <= max_points:
+        return list(range(length))
+
+    step = math.ceil(length / max_points)
+    indexes = list(range(0, length, step))
+    if indexes[-1] != length - 1:
+        indexes.append(length - 1)
+    return indexes
+
+
+def _sample_series(values: list[float | None]) -> dict[str, Any]:
+    sampled_indexes = _sample_indexes(len(values))
+    sampled_values = [values[index] for index in sampled_indexes]
+    return {
+        "sampledIndices": sampled_indexes,
+        "sampledValues": sampled_values,
+        "sourcePoints": len(values),
+        "sampledPoints": len(sampled_indexes),
+        "sampledDown": len(sampled_indexes) < len(values),
+    }
+
+
+def _series_statistics(values: list[float | None]) -> dict[str, float | None]:
+    finite_values = [value for value in values if value is not None]
+    if not finite_values:
+        return {
+            "min": None,
+            "max": None,
+            "mean": None,
+            "range": None,
+            "firstFinite": None,
+            "lastFinite": None,
+        }
+
+    minimum = min(finite_values)
+    maximum = max(finite_values)
+    return {
+        "min": minimum,
+        "max": maximum,
+        "mean": statistics.fmean(finite_values),
+        "range": maximum - minimum,
+        "firstFinite": finite_values[0],
+        "lastFinite": finite_values[-1],
+    }
+
+
 def summarize_value_arrays_tool(arguments: dict[str, Any], result: str) -> ToolExecutionResult:
     payload = tool_result_payload(result)
     parsed_result = payload.get("result")
@@ -185,27 +226,34 @@ def summarize_value_arrays_tool(arguments: dict[str, Any], result: str) -> ToolE
         return ToolExecutionResult(model_payload=payload, client_result=parsed_result)
 
     series_summaries: list[dict[str, Any]] = []
-    plotted_arrays: list[list[float | None]] = []
-    longest_series = 0
+    client_series: list[dict[str, Any]] = []
 
     for index, raw_array in enumerate(value_arrays):
         values = raw_array if isinstance(raw_array, list) else []
         plotted_values = [_safe_numeric(value) for value in values]
-        finite_values = [value for value in plotted_values if value is not None]
         label = f"Result {index + 1}"
+        series_stats = _series_statistics(plotted_values)
+        sampled_series = _sample_series(plotted_values)
 
         series_summaries.append(
             {
                 "label": label,
                 "points": len(values),
-                "finitePoints": len(finite_values),
-                "missingPoints": len(values) - len(finite_values),
-                "min": min(finite_values) if finite_values else None,
-                "max": max(finite_values) if finite_values else None,
+                "finitePoints": len([value for value in plotted_values if value is not None]),
+                "missingPoints": len([value for value in plotted_values if value is None]),
+                **series_stats,
+                "sampledPoints": sampled_series["sampledPoints"],
+                "sampledDown": sampled_series["sampledDown"],
             }
         )
-        plotted_arrays.append(plotted_values)
-        longest_series = max(longest_series, len(values))
+        client_series.append(
+            sanitize_json_value(
+                {
+                    "label": label,
+                    **sampled_series,
+                }
+            )
+        )
 
     test_id = parsed_result.get("testId") or arguments.get("test_id")
     strict = bool(parsed_result.get("strict", arguments.get("strict", True)))
@@ -217,22 +265,30 @@ def summarize_value_arrays_tool(arguments: dict[str, Any], result: str) -> ToolE
         "count": parsed_result.get("count", len(series_summaries)),
         "valuesLimit": values_limit,
         "plotShownToUser": True,
+        "sampling": {
+            "maxPoints": MAX_PLOT_POINTS,
+            "strategy": "deterministic_stride",
+        },
         "note": (
-            "A line plot of the returned value arrays is already shown to the user. "
-            "Raw arrays are intentionally omitted from model context to keep the prompt small."
+            "A line plot of sampled value arrays is already shown to the user. "
+            "Full arrays are intentionally omitted from the client payload and model context to keep the response small."
         ),
         "seriesSummaries": [
             {
                 **summary,
                 "minText": _format_value(summary["min"]),
                 "maxText": _format_value(summary["max"]),
+                "meanText": _format_value(summary["mean"]),
+                "rangeText": _format_value(summary["range"]),
+                "firstFiniteText": _format_value(summary["firstFinite"]),
+                "lastFiniteText": _format_value(summary["lastFinite"]),
             }
             for summary in series_summaries
         ],
     }
     client_result = {
         **summarized_result,
-        "valueArrays": plotted_arrays,
+        "valueArrays": client_series,
     }
     return ToolExecutionResult(
         model_payload={"result": summarized_result},
@@ -253,6 +309,7 @@ def summarize_value_columns_tool(arguments: dict[str, Any], result: str) -> Tool
 
     series_summaries: list[dict[str, Any]] = []
     client_value_columns: list[dict[str, Any]] = []
+    has_sampled_values = False
 
     for index, raw_column in enumerate(raw_value_columns):
         column = raw_column if isinstance(raw_column, dict) else {}
@@ -262,9 +319,10 @@ def summarize_value_columns_tool(arguments: dict[str, Any], result: str) -> Tool
             continue
 
         plotted_values = [_safe_numeric(value) for value in values]
-        finite_values = [value for value in plotted_values if value is not None]
         name = column.get("name")
         source_document_id = column.get("sourceDocumentId")
+        series_stats = _series_statistics(plotted_values)
+        sampled_series = _sample_series(plotted_values)
 
         if isinstance(name, str) and name.strip():
             label = name.strip()
@@ -281,22 +339,24 @@ def summarize_value_columns_tool(arguments: dict[str, Any], result: str) -> Tool
                 "childId": column.get("childId"),
                 "sourceDocumentId": source_document_id,
                 "points": len(values),
-                "finitePoints": len(finite_values),
-                "missingPoints": len(values) - len(finite_values),
-                "min": min(finite_values) if finite_values else None,
-                "max": max(finite_values) if finite_values else None,
+                "finitePoints": len([value for value in plotted_values if value is not None]),
+                "missingPoints": len([value for value in plotted_values if value is None]),
+                **series_stats,
+                "sampledPoints": sampled_series["sampledPoints"],
+                "sampledDown": sampled_series["sampledDown"],
             }
         )
         client_value_columns.append(
             sanitize_json_value(
                 {
-                    **column,
-                    "values": plotted_values,
+                    **{key: value for key, value in column.items() if key != "values"},
+                    **sampled_series,
                 }
             )
         )
+        has_sampled_values = True
 
-    if not any(isinstance(column.get("values"), list) for column in client_value_columns):
+    if not has_sampled_values:
         return ToolExecutionResult(model_payload=payload, client_result=parsed_result)
 
     strict = bool(parsed_result.get("strict", arguments.get("strict", True)))
@@ -311,15 +371,23 @@ def summarize_value_columns_tool(arguments: dict[str, Any], result: str) -> Tool
         "count": parsed_result.get("count", len(client_value_columns)),
         "valuesLimit": values_limit,
         "plotShownToUser": include_values,
+        "sampling": {
+            "maxPoints": MAX_PLOT_POINTS,
+            "strategy": "deterministic_stride",
+        },
         "note": (
-            "If values were requested, a line plot of the returned value columns is already shown to the user. "
-            "Raw values are intentionally omitted from model context to keep the prompt small."
+            "If values were requested, a line plot of sampled value columns is already shown to the user. "
+            "Full values are intentionally omitted from the client payload and model context to keep the response small."
         ),
         "seriesSummaries": [
             {
                 **summary,
                 "minText": _format_value(summary["min"]),
                 "maxText": _format_value(summary["max"]),
+                "meanText": _format_value(summary["mean"]),
+                "rangeText": _format_value(summary["range"]),
+                "firstFiniteText": _format_value(summary["firstFinite"]),
+                "lastFiniteText": _format_value(summary["lastFinite"]),
             }
             for summary in series_summaries
         ],
@@ -327,7 +395,7 @@ def summarize_value_columns_tool(arguments: dict[str, Any], result: str) -> Tool
             {
                 key: value
                 for key, value in sanitize_json_value(column).items()
-                if key != "values"
+                if key not in {"values", "sampledValues", "sampledIndices"}
             }
             for column in client_value_columns
         ],
@@ -379,121 +447,108 @@ class MCPEnabledChatAgent:
             request["tools"] = tools
         return self.client.chat.completions.create(**request)
 
-    def respond(self, message: str, role: str | None, history: List[dict]) -> ChatAgentResponse:
-        prompt = f"""
-System instructions:
-{SYSTEM_PROMPT.strip()}
-
-Audience instructions:
-{audience_instruction(role)}
-
-Conversation history:
-{format_history(history)}
-
-Latest user question:
-{message}
-""".strip()
-
-        base_messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
-        fallback_instruction = (
-            "\n\nTool status:\n"
-            "If external tools are unavailable, answer general questions normally. "
-            "If the user asks for data that requires tools, explain that the tools are currently unavailable."
-        )
+    def respond(self, message: str, role: str | None, history: list[dict]) -> ChatAgentResponse:
+        conversation_history = history_messages(history)
+        base_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": SYSTEM_PROMPT.strip()},
+            {"role": "system", "content": audience_instruction(role)},
+            *conversation_history,
+            {"role": "user", "content": message},
+        ]
+        fallback_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": SYSTEM_PROMPT.strip()},
+            {"role": "system", "content": audience_instruction(role)},
+            {
+                "role": "system",
+                "content": (
+                    "External MCP tools are currently unavailable. "
+                    "Answer general questions normally. "
+                    "If the user asks for stored data that requires tools, explain that the tools are unavailable."
+                ),
+            },
+            *conversation_history,
+            {"role": "user", "content": message},
+        ]
 
         try:
             with self.toolbox_factory(self.mcp_server_root) as toolbox:
                 tools = toolbox.openai_tools()
                 messages: list[dict[str, Any]] = list(base_messages)
-                used_tool = False
                 tool_calls_for_client: list[dict[str, Any]] = []
                 analysis_for_client: list[dict[str, Any]] = []
 
-                for _ in range(6):
-                    response = self._completion(messages, tools)
-                    choice = response.choices[0] if response.choices else None
-                    assistant_message = getattr(choice, "message", None)
+                response = self._completion(messages, tools)
+                choice = response.choices[0] if response.choices else None
+                assistant_message = getattr(choice, "message", None)
 
-                    if assistant_message is None:
-                        return ChatAgentResponse(answer="I could not generate a response.")
+                if assistant_message is None:
+                    return ChatAgentResponse(answer="I could not generate a response.")
 
-                    tool_calls = list(getattr(assistant_message, "tool_calls", None) or [])
-                    assistant_payload = assistant_message.model_dump(exclude_none=True)
-                    assistant_payload.setdefault("role", "assistant")
-                    messages.append(assistant_payload)
+                tool_calls = list(getattr(assistant_message, "tool_calls", None) or [])
+                assistant_payload = assistant_message.model_dump(exclude_none=True)
+                assistant_payload.setdefault("role", "assistant")
+                messages.append(assistant_payload)
 
-                    if not tool_calls:
-                        final_text = extract_text(response)
-                        if used_tool and looks_incomplete_after_tools(final_text):
-                            logger.warning(
-                                "Model returned an incomplete post-tool answer; forcing one more completion turn"
-                            )
-                            messages.append(
-                                {
-                                    "role": "system",
-                                    "content": (
-                                        "You already have the tool results. Answer the user's request now. "
-                                        "Do not say that you will retrieve data or ask the user to wait. "
-                                        "If no matching records were found, say that explicitly."
-                                    ),
-                                }
-                            )
-                            continue
-                        return ChatAgentResponse(
-                            answer=final_text or "I could not generate a response.",
-                            tool_calls=tool_calls_for_client,
-                            analysis=analysis_for_client,
-                        )
+                if not tool_calls:
+                    return ChatAgentResponse(
+                        answer=extract_text(response) or "I could not generate a response.",
+                        tool_calls=tool_calls_for_client,
+                        analysis=analysis_for_client,
+                    )
 
-                    for tool_call in tool_calls:
-                        function = getattr(tool_call, "function", None)
-                        name = getattr(function, "name", "")
-                        arguments = function_call_arguments(getattr(function, "arguments", None))
-                        logger.info("Model requested MCP tool '%s' with arguments: %s", name, json.dumps(arguments, default=str))
-                        try:
-                            result = toolbox.call(name, arguments)
-                            execution = execute_tool_for_chat(name, arguments, result)
-                            response_payload = json.dumps(sanitize_json_value(execution.model_payload), allow_nan=False)
-                            tool_calls_for_client.append(
-                                {
-                                    "name": name,
-                                    "args": arguments,
-                                    "result": execution.client_result,
-                                }
-                            )
-                            analysis_for_client.extend(execution.analysis)
-                        except Exception as exc:
-                            logger.exception("MCP tool '%s' failed during chat answer", name)
-                            response_payload = json.dumps({"error": str(exc)})
-                            tool_calls_for_client.append(
-                                {
-                                    "name": name,
-                                    "args": arguments,
-                                    "result": {"error": str(exc)},
-                                }
-                            )
-
-                        messages.append(
+                for tool_call in tool_calls:
+                    function = getattr(tool_call, "function", None)
+                    name = getattr(function, "name", "")
+                    arguments = function_call_arguments(getattr(function, "arguments", None))
+                    logger.info("Model requested MCP tool '%s' with arguments: %s", name, json.dumps(arguments, default=str))
+                    try:
+                        result = toolbox.call(name, arguments)
+                        execution = execute_tool_for_chat(name, arguments, result)
+                        response_payload = json.dumps(sanitize_json_value(execution.model_payload), allow_nan=False)
+                        tool_calls_for_client.append(
                             {
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": response_payload,
+                                "name": name,
+                                "args": arguments,
+                                "result": execution.client_result,
                             }
                         )
-                        used_tool = True
+                        analysis_for_client.extend(execution.analysis)
+                    except Exception as exc:
+                        logger.exception("MCP tool '%s' failed during chat answer", name)
+                        response_payload = json.dumps({"error": str(exc)})
+                        tool_calls_for_client.append(
+                            {
+                                "name": name,
+                                "args": arguments,
+                                "result": {"error": str(exc)},
+                            }
+                        )
 
-                return ChatAgentResponse(answer="I could not complete the tool workflow.")
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": response_payload,
+                        }
+                    )
+
+                final_response = self._completion(
+                    messages + [{"role": "system", "content": FINAL_ANSWER_PROMPT.strip()}]
+                )
+                return ChatAgentResponse(
+                    answer=extract_text(final_response) or "I could not generate a response.",
+                    tool_calls=tool_calls_for_client,
+                    analysis=analysis_for_client,
+                )
         except openai.APIError as exc:
             return ChatAgentResponse(answer=format_model_error(exc))
         except Exception:
             logger.exception("Falling back after MCP or agent failure")
             try:
-                response = self._completion(
-                    [{"role": "user", "content": prompt + fallback_instruction}],
-                )
+                response = self._completion(fallback_messages)
                 return ChatAgentResponse(answer=extract_text(response) or "I could not generate a response.")
             except openai.APIError as exc:
                 return ChatAgentResponse(answer=format_model_error(exc))
 
-    def answer(self, message: str, role: str | None, history: List[dict]) -> str:
+    def answer(self, message: str, role: str | None, history: list[dict]) -> str:
         return self.respond(message, role, history).answer

@@ -1,12 +1,14 @@
 import { useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, Users } from "lucide-react";
+import { AlertTriangle, MessageSquareText, Sparkles, Users } from "lucide-react";
 import RoleToggle, { type UserRole } from "@/components/RoleToggle";
 import MessageBubble from "@/components/MessageBubble";
 import AnalysisVault from "@/components/AnalysisVault";
 import ChatComposer from "@/components/chat/ChatComposer";
 import ChatEmptyState from "@/components/chat/ChatEmptyState";
 import ChatHistorySheet from "@/components/chat/ChatHistorySheet";
+import OutlierWorkbench from "@/components/outliers/OutlierWorkbench";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { ChatMessage } from "@/types/chat";
 import {
@@ -29,6 +31,7 @@ export default function ChatInterface() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [role, setRole] = useState<UserRole>("engineer");
+  const [activeWorkspace, setActiveWorkspace] = useState<"chat" | "outliers">("chat");
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -174,74 +177,104 @@ export default function ChatInterface() {
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[34px] border border-border/60 bg-card/45 shadow-[var(--shadow-elevated)] backdrop-blur-2xl">
           <header className="flex items-center justify-between gap-4 border-b border-border/60 px-4 py-4 md:px-6">
             <div className="flex items-center gap-3">
-              <ChatHistorySheet
-                activeThreadId={activeThread?.id ?? ""}
-                threads={threads}
-                onNewThread={handleNewThread}
-                onSelectThread={handleSelectThread}
-                disabled={loading}
-              />
+              {activeWorkspace === "chat" ? (
+                <ChatHistorySheet
+                  activeThreadId={activeThread?.id ?? ""}
+                  threads={threads}
+                  onNewThread={handleNewThread}
+                  onSelectThread={handleSelectThread}
+                  disabled={loading}
+                />
+              ) : (
+                <div className="flex h-11 w-11 items-center justify-center rounded-full border border-border/60 bg-card/70 text-muted-foreground shadow-[var(--shadow-soft)] backdrop-blur-xl">
+                  <AlertTriangle className="h-4 w-4" />
+                </div>
+              )}
               <div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/12 text-primary shadow-[var(--shadow-soft)]">
-                <Users className="h-5 w-5" />
+                {activeWorkspace === "chat" ? <Users className="h-5 w-5" /> : <AlertTriangle className="h-5 w-5" />}
               </div>
               <div>
-                <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-muted-foreground">Materials Chat</p>
-                <p className="mt-1 text-sm text-muted-foreground">Ask a colleague-style assistant about test results and trends.</p>
+                <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
+                  {activeWorkspace === "chat" ? "Materials Chat" : "Outlier Review"}
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {activeWorkspace === "chat"
+                    ? "Ask a colleague-style assistant about test results and trends."
+                    : "Step through suspicious tests, inspect context, and decide what to do next."}
+                </p>
               </div>
             </div>
 
             <div className="flex items-center gap-3">
+              <Tabs value={activeWorkspace} onValueChange={(value) => setActiveWorkspace(value as "chat" | "outliers")}>
+                <TabsList className="h-auto rounded-full border border-border/60 bg-card/70 p-1 shadow-[var(--shadow-soft)] backdrop-blur-xl">
+                  <TabsTrigger value="chat" className="rounded-full px-4 py-2 text-[11px] font-mono uppercase tracking-[0.18em] data-[state=active]:shadow-[var(--shadow-soft)]">
+                    <MessageSquareText className="mr-2 h-3.5 w-3.5" />
+                    Chat
+                  </TabsTrigger>
+                  <TabsTrigger value="outliers" className="rounded-full px-4 py-2 text-[11px] font-mono uppercase tracking-[0.18em] data-[state=active]:shadow-[var(--shadow-soft)]">
+                    <AlertTriangle className="mr-2 h-3.5 w-3.5" />
+                    Outliers
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
               <div className="hidden items-center gap-2 rounded-full border border-border/60 bg-background/55 px-3 py-2 text-xs text-muted-foreground md:flex">
                 <Sparkles className="h-3.5 w-3.5 text-primary" />
-                Regenerated outputs for each thread
+                {activeWorkspace === "chat" ? "Regenerated outputs for each thread" : "Mock triage flow for engineer review"}
               </div>
               <RoleToggle role={role} onRoleChange={handleRoleChange} />
             </div>
           </header>
 
-          <div className="flex flex-1 min-h-0 bg-background/30">
-            <div
-              className={cn(
-                "flex min-h-0 min-w-0 flex-col",
-                hasResponse ? "w-full md:w-[44%]" : "w-full",
-              )}
-            >
-              <div className="flex-1 overflow-y-auto px-4 py-6 md:px-6">
-                {messages.length === 0 && <ChatEmptyState onSelectExample={setInput} />}
+          {activeWorkspace === "chat" ? (
+            <div className="flex flex-1 min-h-0 bg-background/30">
+              <div
+                className={cn(
+                  "flex min-h-0 min-w-0 flex-col",
+                  hasResponse ? "w-full md:w-[44%]" : "w-full",
+                )}
+              >
+                <div className="flex-1 overflow-y-auto px-4 py-6 md:px-6">
+                  {messages.length === 0 && <ChatEmptyState onSelectExample={setInput} />}
 
-                <div className="mx-auto flex max-w-[860px] flex-col gap-4">
-                  {messages.map((message, index) => (
-                    <MessageBubble key={index} message={message} />
-                  ))}
-                  {loading && <MessageBubble message={{ role: "assistant", content: "" }} isLoading />}
-                  <div ref={bottomRef} />
+                  <div className="mx-auto flex max-w-[860px] flex-col gap-4">
+                    {messages.map((message, index) => (
+                      <MessageBubble key={index} message={message} />
+                    ))}
+                    {loading && <MessageBubble message={{ role: "assistant", content: "" }} isLoading />}
+                    <div ref={bottomRef} />
+                  </div>
                 </div>
+
+                <ChatComposer
+                  input={input}
+                  loading={loading}
+                  textareaRef={textareaRef}
+                  onChange={setInput}
+                  onKeyDown={onKeyDown}
+                  onSend={() => void send()}
+                />
               </div>
 
-              <ChatComposer
-                input={input}
-                loading={loading}
-                textareaRef={textareaRef}
-                onChange={setInput}
-                onKeyDown={onKeyDown}
-                onSend={() => void send()}
-              />
+              <AnimatePresence>
+                {hasResponse && (
+                  <motion.div
+                    initial={{ opacity: 0, x: 24 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 24 }}
+                    transition={{ duration: 0.45, ease: [0.4, 0, 0.2, 1] }}
+                    className="hidden min-h-0 min-w-0 border-l border-border/60 bg-background/35 md:block md:w-[56%]"
+                  >
+                    <AnalysisVault data={analysisData} />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
-
-            <AnimatePresence>
-              {hasResponse && (
-                <motion.div
-                  initial={{ opacity: 0, x: 24 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 24 }}
-                  transition={{ duration: 0.45, ease: [0.4, 0, 0.2, 1] }}
-                  className="hidden min-h-0 min-w-0 border-l border-border/60 bg-background/35 md:block md:w-[56%]"
-                >
-                  <AnalysisVault data={analysisData} />
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+          ) : (
+            <div className="min-h-0 flex-1 bg-background/30">
+              <OutlierWorkbench />
+            </div>
+          )}
         </div>
       </div>
     </div>

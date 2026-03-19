@@ -6,12 +6,16 @@ services:
     environment:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       AGENT_PORT: 8003
+      MONGO_URI: mongodb://host.docker.internal:27017
+      MONGO_DB: txp_clean
     ports:
       - "8003:8003"
     volumes:
       - ./agent:/app
     networks:
       - matai-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   backend:
     build: ./backend

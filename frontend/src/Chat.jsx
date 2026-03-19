@@ -124,16 +124,23 @@ export default function Chat({ exampleQuery, onExampleConsumed }) {
     setLoading(true)
 
     try {
+      console.log("Sending request:", {
+        message: text,
+        history: newHistory,
+      })
+
       const res = await fetch(`${BACKEND}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: text,
-          history: history.map(m => ({ role: m.role, content: m.content })),
+          history: newHistory.map(m => ({ role: m.role, content: m.content })),
         }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
+
+      console.log("Response:", data)
 
       setHistory([...newHistory, {
         role: 'assistant',

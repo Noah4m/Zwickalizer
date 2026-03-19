@@ -220,12 +220,22 @@ class MCPToolbox:
                 "type": "function",
                 "function": {
                     "name": tool.public_name,
-                    "description": tool.description,
+                    "description": self._tool_description_for_model(tool),
                     "parameters": tool.input_schema,
                 },
             }
             for tool in self.tools.values()
         ]
+
+    def _tool_description_for_model(self, tool: MCPToolSpec) -> str:
+        description = tool.description
+        if tool.public_name == "db_get_test_value_arrays":
+            description += (
+                " In this chat UI, calling this tool automatically shows the user a line plot of the returned arrays. "
+                "The raw arrays are not passed back into model context after the call; instead you receive a compact "
+                "summary with per-line min/max and counts. After calling it, discuss the plotted result shown to the user."
+            )
+        return description
 
     def call(self, public_name: str, arguments: dict[str, Any]) -> str:
         tool = self.tools[public_name]

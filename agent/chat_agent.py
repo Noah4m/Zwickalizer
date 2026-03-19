@@ -1,6 +1,8 @@
 # LLM orchestration layer: builds prompts, calls OpenAI, and runs MCP tools when needed.
 import json
 import logging
+import math
+from dataclasses import dataclass, field
 from typing import Any, Callable, List
 
 import openai
@@ -102,6 +104,16 @@ def format_model_error(exc: Exception) -> str:
     return f"Model error: {message}"
 
 
+def sanitize_json_value(value: Any) -> Any:
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, list):
+        return [sanitize_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): sanitize_json_value(item) for key, item in value.items()}
+    return value
+
+
 def tool_result_payload(result: str) -> dict[str, Any]:
     try:
         parsed = json.loads(result)
@@ -109,8 +121,22 @@ def tool_result_payload(result: str) -> dict[str, Any]:
         parsed = None
 
     if parsed is not None:
-        return {"result": parsed}
+        return {"result": sanitize_json_value(parsed)}
     return {"result_text": result}
+
+
+@dataclass
+class ChatAgentResponse:
+    answer: str
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    analysis: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class ToolExecutionResult:
+    model_payload: dict[str, Any]
+    client_result: Any = None
+    analysis: list[dict[str, Any]] = field(default_factory=list)
 
 
 def looks_incomplete_after_tools(text: str) -> bool:
@@ -131,6 +157,154 @@ def looks_incomplete_after_tools(text: str) -> bool:
         "retrieving the data",
     )
     return any(marker in normalized for marker in incomplete_markers)
+
+
+def _safe_numeric(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    numeric = float(value)
+    if not math.isfinite(numeric):
+        return None
+    return numeric
+
+
+def _format_value(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.6g}"
+
+
+def _series_palette(index: int) -> str:
+    palette = [
+        "primary",
+        "accent",
+        "#f59e0b",
+        "#10b981",
+        "#6366f1",
+        "#ef4444",
+        "#06b6d4",
+        "#8b5cf6",
+    ]
+    return palette[index % len(palette)]
+
+
+def summarize_value_arrays_tool(arguments: dict[str, Any], result: str) -> ToolExecutionResult:
+    payload = tool_result_payload(result)
+    parsed_result = payload.get("result")
+    if not isinstance(parsed_result, dict):
+        return ToolExecutionResult(model_payload=payload, client_result=parsed_result)
+
+    value_arrays = parsed_result.get("valueArrays")
+    if not isinstance(value_arrays, list):
+        return ToolExecutionResult(model_payload=payload, client_result=parsed_result)
+
+    series_summaries: list[dict[str, Any]] = []
+    plotted_arrays: list[list[float | None]] = []
+    longest_series = 0
+
+    for index, raw_array in enumerate(value_arrays):
+        values = raw_array if isinstance(raw_array, list) else []
+        plotted_values = [_safe_numeric(value) for value in values]
+        finite_values = [value for value in plotted_values if value is not None]
+        label = f"Result {index + 1}"
+
+        series_summaries.append(
+            {
+                "label": label,
+                "points": len(values),
+                "finitePoints": len(finite_values),
+                "missingPoints": len(values) - len(finite_values),
+                "min": min(finite_values) if finite_values else None,
+                "max": max(finite_values) if finite_values else None,
+            }
+        )
+        plotted_arrays.append(plotted_values)
+        longest_series = max(longest_series, len(values))
+
+    points: list[dict[str, Any]] = []
+    for point_index in range(longest_series):
+        point: dict[str, Any] = {"index": point_index}
+        for series_index, plotted_values in enumerate(plotted_arrays):
+            series_key = f"series_{series_index + 1}"
+            point[series_key] = plotted_values[point_index] if point_index < len(plotted_values) else None
+        points.append(point)
+
+    test_id = parsed_result.get("testId") or arguments.get("test_id")
+    strict = bool(parsed_result.get("strict", arguments.get("strict", True)))
+    values_limit = parsed_result.get("valuesLimit", arguments.get("values_limit"))
+    stats_cards = [
+        {"label": "Series", "value": str(len(series_summaries)), "delta": "plotted"},
+        {"label": "Longest line", "value": str(longest_series), "delta": "points"},
+        {"label": "Mode", "value": "Strict" if strict else "Loose", "delta": "matching"},
+    ]
+    if values_limit is not None:
+        stats_cards.append({"label": "Limit", "value": str(values_limit), "delta": "per line"})
+    else:
+        stats_cards.append({"label": "Limit", "value": "Full", "delta": "returned"})
+
+    analysis = [
+        {
+            "type": "stats",
+            "title": "Value array plot summary",
+            "data": stats_cards,
+        },
+        {
+            "type": "chart",
+            "title": "Test value arrays",
+            "subtitle": (
+                f"Test {test_id}. Each returned value array is shown as a separate line over sample index."
+            ),
+            "data": {
+                "kind": "line",
+                "xKey": "index",
+                "yAxisLabel": "Value",
+                "points": points,
+                "series": [
+                    {
+                        "key": f"series_{series_index + 1}",
+                        "label": summary["label"],
+                        "color": _series_palette(series_index),
+                    }
+                    for series_index, summary in enumerate(series_summaries)
+                ],
+            },
+        },
+    ]
+
+    summarized_result = {
+        "testId": test_id,
+        "strict": strict,
+        "count": parsed_result.get("count", len(series_summaries)),
+        "valuesLimit": values_limit,
+        "plotShownToUser": True,
+        "note": (
+            "A line plot of the returned value arrays is already shown to the user. "
+            "Raw arrays are intentionally omitted from model context to keep the prompt small."
+        ),
+        "seriesSummaries": [
+            {
+                **summary,
+                "minText": _format_value(summary["min"]),
+                "maxText": _format_value(summary["max"]),
+            }
+            for summary in series_summaries
+        ],
+    }
+    return ToolExecutionResult(
+        model_payload={"result": summarized_result},
+        client_result=summarized_result,
+        analysis=analysis,
+    )
+
+
+def execute_tool_for_chat(name: str, arguments: dict[str, Any], result: str) -> ToolExecutionResult:
+    if name == "db_get_test_value_arrays":
+        return summarize_value_arrays_tool(arguments, result)
+    payload = tool_result_payload(result)
+    return ToolExecutionResult(
+        model_payload=payload,
+        client_result=payload.get("result") or payload.get("result_text"),
+    )
 
 
 class MCPEnabledChatAgent:
@@ -157,7 +331,7 @@ class MCPEnabledChatAgent:
             request["tools"] = tools
         return self.client.chat.completions.create(**request)
 
-    def answer(self, message: str, role: str | None, history: List[dict]) -> str:
+    def respond(self, message: str, role: str | None, history: List[dict]) -> ChatAgentResponse:
         prompt = f"""
 System instructions:
 {SYSTEM_PROMPT.strip()}
@@ -184,6 +358,8 @@ Latest user question:
                 tools = toolbox.openai_tools()
                 messages: list[dict[str, Any]] = list(base_messages)
                 used_tool = False
+                tool_calls_for_client: list[dict[str, Any]] = []
+                analysis_for_client: list[dict[str, Any]] = []
 
                 for _ in range(6):
                     response = self._completion(messages, tools)
@@ -191,7 +367,7 @@ Latest user question:
                     assistant_message = getattr(choice, "message", None)
 
                     if assistant_message is None:
-                        return "I could not generate a response."
+                        return ChatAgentResponse(answer="I could not generate a response.")
 
                     tool_calls = list(getattr(assistant_message, "tool_calls", None) or [])
                     assistant_payload = assistant_message.model_dump(exclude_none=True)
@@ -215,7 +391,11 @@ Latest user question:
                                 }
                             )
                             continue
-                        return final_text or "I could not generate a response."
+                        return ChatAgentResponse(
+                            answer=final_text or "I could not generate a response.",
+                            tool_calls=tool_calls_for_client,
+                            analysis=analysis_for_client,
+                        )
 
                     for tool_call in tool_calls:
                         function = getattr(tool_call, "function", None)
@@ -224,10 +404,26 @@ Latest user question:
                         logger.info("Model requested MCP tool '%s' with arguments: %s", name, json.dumps(arguments, default=str))
                         try:
                             result = toolbox.call(name, arguments)
-                            response_payload = json.dumps(tool_result_payload(result))
+                            execution = execute_tool_for_chat(name, arguments, result)
+                            response_payload = json.dumps(sanitize_json_value(execution.model_payload), allow_nan=False)
+                            tool_calls_for_client.append(
+                                {
+                                    "name": name,
+                                    "args": arguments,
+                                    "result": execution.client_result,
+                                }
+                            )
+                            analysis_for_client.extend(execution.analysis)
                         except Exception as exc:
                             logger.exception("MCP tool '%s' failed during chat answer", name)
                             response_payload = json.dumps({"error": str(exc)})
+                            tool_calls_for_client.append(
+                                {
+                                    "name": name,
+                                    "args": arguments,
+                                    "result": {"error": str(exc)},
+                                }
+                            )
 
                         messages.append(
                             {
@@ -238,15 +434,18 @@ Latest user question:
                         )
                         used_tool = True
 
-                return "I could not complete the tool workflow."
+                return ChatAgentResponse(answer="I could not complete the tool workflow.")
         except openai.APIError as exc:
-            return format_model_error(exc)
+            return ChatAgentResponse(answer=format_model_error(exc))
         except Exception:
             logger.exception("Falling back after MCP or agent failure")
             try:
                 response = self._completion(
                     [{"role": "user", "content": prompt + fallback_instruction}],
                 )
-                return extract_text(response) or "I could not generate a response."
+                return ChatAgentResponse(answer=extract_text(response) or "I could not generate a response.")
             except openai.APIError as exc:
-                return format_model_error(exc)
+                return ChatAgentResponse(answer=format_model_error(exc))
+
+    def answer(self, message: str, role: str | None, history: List[dict]) -> str:
+        return self.respond(message, role, history).answer

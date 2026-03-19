@@ -2,6 +2,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   toolCalls?: ToolCall[];
+  analysis?: AnalysisData[];
   timestamp?: Date;
 }
 
@@ -20,13 +21,13 @@ export interface AnalysisStat {
 export interface AnalysisSeries {
   key: string;
   label: string;
-  color?: "primary" | "accent" | "muted";
+  color?: string;
 }
 
 export interface AnalysisChartData {
   kind: "bar" | "line";
   xKey: string;
-  points: Array<Record<string, string | number>>;
+  points: Array<Record<string, string | number | null>>;
   series: AnalysisSeries[];
   yAxisLabel?: string;
 }

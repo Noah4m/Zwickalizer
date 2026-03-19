@@ -3,6 +3,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -31,6 +32,28 @@ const mutedColor = "hsl(var(--muted-foreground))";
 const gridColor = "hsl(var(--border))";
 const tooltipBackground = "hsl(var(--card) / 0.92)";
 const tooltipBorder = "1px solid hsl(var(--border))";
+
+function resolveSeriesColor(color: string | undefined, index: number) {
+  if (color && color in colorMap) {
+    return colorMap[color as keyof typeof colorMap];
+  }
+
+  if (color) {
+    return color;
+  }
+
+  const fallbackPalette = [
+    colorMap.primary,
+    colorMap.accent,
+    "#f59e0b",
+    "#10b981",
+    "#6366f1",
+    "#ef4444",
+    "#06b6d4",
+    "#8b5cf6",
+  ];
+  return fallbackPalette[index % fallbackPalette.length];
+}
 
 function StatsSection({ title, stats }: { title: string; stats: AnalysisStat[] }) {
   return (
@@ -70,7 +93,11 @@ function ChartSection({ title, subtitle, chart }: { title: string; subtitle?: st
       <ResponsiveContainer width="100%" height={220}>
         <Chart data={chart.points}>
           <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
-          <XAxis dataKey={chart.xKey} tick={{ fill: mutedColor, fontSize: 11, fontFamily: "JetBrains Mono" }} />
+          <XAxis
+            dataKey={chart.xKey}
+            tick={{ fill: mutedColor, fontSize: 11, fontFamily: "JetBrains Mono" }}
+            minTickGap={24}
+          />
           <YAxis
             tick={{ fill: mutedColor, fontSize: 11, fontFamily: "JetBrains Mono" }}
             label={chart.yAxisLabel ? { value: chart.yAxisLabel, angle: -90, position: "insideLeft", fill: mutedColor, fontSize: 10 } : undefined}
@@ -86,17 +113,35 @@ function ChartSection({ title, subtitle, chart }: { title: string; subtitle?: st
             }}
             labelStyle={{ color: mutedColor }}
           />
-          {chart.series.map((series) =>
+          {chart.series.length > 1 && (
+            <Legend
+              wrapperStyle={{ fontFamily: "JetBrains Mono", fontSize: "11px", color: mutedColor, paddingTop: "10px" }}
+            />
+          )}
+          {chart.series.map((series, index) =>
             isBar ? (
-              <Bar key={series.key} dataKey={series.key} fill={colorMap[series.color ?? "primary"]} radius={[10, 10, 0, 0]} />
+              <Bar
+                key={series.key}
+                dataKey={series.key}
+                name={series.label}
+                fill={resolveSeriesColor(series.color, index)}
+                radius={[10, 10, 0, 0]}
+              />
             ) : (
               <Line
                 key={series.key}
                 type="monotone"
                 dataKey={series.key}
-                stroke={colorMap[series.color ?? "primary"]}
+                name={series.label}
+                stroke={resolveSeriesColor(series.color, index)}
                 strokeWidth={2.5}
-                dot={{ fill: colorMap[series.color ?? "primary"], r: 3 }}
+                connectNulls={false}
+                isAnimationActive={false}
+                dot={
+                  chart.points.length <= 80
+                    ? { fill: resolveSeriesColor(series.color, index), r: 2.5 }
+                    : false
+                }
               />
             ),
           )}

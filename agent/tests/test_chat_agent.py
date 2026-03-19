@@ -100,9 +100,11 @@ class FakeClient:
 
 
 class FakeToolbox:
-    def __init__(self, result):
+    def __init__(self, result, tool_name="db_find_tests", description="Find tests for a customer and test type."):
         self.result = result
         self.calls = []
+        self.tool_name = tool_name
+        self.description = description
 
     def __enter__(self):
         return self
@@ -115,8 +117,8 @@ class FakeToolbox:
             {
                 "type": "function",
                 "function": {
-                    "name": "db_find_tests",
-                    "description": "Find tests for a customer and test type.",
+                    "name": self.tool_name,
+                    "description": self.description,
                     "parameters": {"type": "object", "properties": {}},
                 },
             }
@@ -187,6 +189,63 @@ class ChatAgentTests(unittest.TestCase):
     def test_incomplete_message_detector_is_conservative(self):
         self.assertTrue(looks_incomplete_after_tools("Please hold on while I retrieve the data."))
         self.assertFalse(looks_incomplete_after_tools("No matching tensile tests were found for Company_3."))
+
+    def test_value_array_tool_sends_only_summary_to_model_and_plot_to_client(self):
+        final_answer = "I plotted 2 value arrays for the requested test. Result 1 ranges from 0 to 10 and Result 2 ranges from 5 to 15."
+        responses = [
+            FakeResponse(
+                FakeMessage(
+                    "Let me retrieve and plot the stored value arrays.",
+                    tool_calls=[
+                        FakeToolCall(
+                            "call_1",
+                            "db_get_test_value_arrays",
+                            {"test_id": "T-200", "values_limit": 4},
+                        )
+                    ],
+                )
+            ),
+            FakeResponse(FakeMessage(final_answer)),
+        ]
+        client = FakeClient(responses)
+        toolbox = FakeToolbox(
+            json.dumps(
+                {
+                    "testId": "T-200",
+                    "strict": True,
+                    "count": 2,
+                    "valuesLimit": 4,
+                    "valueArrays": [[0, 10, float("nan"), 4], [5, 15, 8, 7]],
+                }
+            ),
+            tool_name="db_get_test_value_arrays",
+            description="Return value arrays for a test.",
+        )
+        agent = MCPEnabledChatAgent(
+            api_key="test-key",
+            model="test-model",
+            mcp_server_root="/tmp/mcp",
+            client=client,
+            toolbox_factory=lambda _: toolbox,
+        )
+
+        response = agent.respond("plot the value arrays for test T-200", "engineer", [])
+
+        self.assertEqual(response.answer, final_answer)
+        self.assertEqual(len(response.analysis), 2)
+        self.assertEqual(response.analysis[1]["type"], "chart")
+        self.assertEqual(len(response.analysis[1]["data"]["series"]), 2)
+        self.assertEqual(response.analysis[1]["data"]["points"][2]["series_1"], None)
+        self.assertEqual(response.tool_calls[0]["result"]["plotShownToUser"], True)
+        self.assertEqual(response.tool_calls[0]["result"]["seriesSummaries"][0]["min"], 0.0)
+        self.assertEqual(response.tool_calls[0]["result"]["seriesSummaries"][1]["max"], 15.0)
+
+        second_request_messages = client.chat.completions.requests[1]["messages"]
+        tool_message = next(message for message in second_request_messages if message["role"] == "tool")
+        self.assertIn('"plotShownToUser": true', tool_message["content"])
+        self.assertIn('"seriesSummaries"', tool_message["content"])
+        self.assertNotIn('"valueArrays"', tool_message["content"])
+        self.assertNotIn("NaN", tool_message["content"])
 
 
 if __name__ == "__main__":

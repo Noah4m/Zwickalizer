@@ -7,6 +7,7 @@ import AnalysisVault from "@/components/AnalysisVault";
 import ChatComposer from "@/components/chat/ChatComposer";
 import ChatEmptyState from "@/components/chat/ChatEmptyState";
 import ChatHistorySheet from "@/components/chat/ChatHistorySheet";
+import { cn } from "@/lib/utils";
 import { ChatMessage } from "@/types/chat";
 import {
   createEmptyThread,
@@ -199,10 +200,11 @@ export default function ChatInterface() {
           </header>
 
           <div className="flex flex-1 min-h-0 bg-background/30">
-            <motion.div
-              className="flex min-h-0 min-w-0 flex-col"
-              animate={{ width: hasResponse ? "44%" : "100%" }}
-              transition={{ duration: 0.45, ease: [0.4, 0, 0.2, 1] }}
+            <div
+              className={cn(
+                "flex min-h-0 min-w-0 flex-col",
+                hasResponse ? "w-full md:w-[44%]" : "w-full",
+              )}
             >
               <div className="flex-1 overflow-y-auto px-4 py-6 md:px-6">
                 {messages.length === 0 && <ChatEmptyState onSelectExample={setInput} />}
@@ -224,16 +226,16 @@ export default function ChatInterface() {
                 onKeyDown={onKeyDown}
                 onSend={() => void send()}
               />
-            </motion.div>
+            </div>
 
             <AnimatePresence>
               {hasResponse && (
                 <motion.div
-                  initial={{ width: 0, opacity: 0 }}
-                  animate={{ width: "56%", opacity: 1 }}
-                  exit={{ width: 0, opacity: 0 }}
+                  initial={{ opacity: 0, x: 24 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 24 }}
                   transition={{ duration: 0.45, ease: [0.4, 0, 0.2, 1] }}
-                  className="hidden min-h-0 min-w-0 border-l border-border/60 bg-background/35 md:block"
+                  className="hidden min-h-0 min-w-0 border-l border-border/60 bg-background/35 md:block md:w-[56%]"
                 >
                   <AnalysisVault data={analysisData} />
                 </motion.div>

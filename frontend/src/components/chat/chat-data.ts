@@ -31,6 +31,93 @@ export function getThreadTitle(input: string) {
   return input.length > 42 ? `${input.slice(0, 42)}…` : input;
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function buildValueArrayAnalysis(message: ChatMessage): AnalysisData[] | null {
+  const toolCall = [...(message.toolCalls ?? [])]
+    .reverse()
+    .find((entry) => entry.name === "db_get_test_value_arrays");
+
+  if (!toolCall || typeof toolCall.result !== "object" || toolCall.result === null) {
+    return null;
+  }
+
+  const result = toolCall.result as Record<string, unknown>;
+  const rawValueArrays = result.valueArrays;
+  if (!Array.isArray(rawValueArrays)) {
+    return null;
+  }
+
+  const plottedArrays = rawValueArrays.map((entry) =>
+    Array.isArray(entry)
+      ? entry.map((value) => (isFiniteNumber(value) ? value : null))
+      : [],
+  );
+
+  const longestSeries = plottedArrays.reduce(
+    (max, values) => Math.max(max, values.length),
+    0,
+  );
+
+  const points = Array.from({ length: longestSeries }, (_, index) => {
+    const point: Record<string, string | number | null> = { index };
+    plottedArrays.forEach((values, seriesIndex) => {
+      point[`series_${seriesIndex + 1}`] = values[index] ?? null;
+    });
+    return point;
+  });
+
+  const strict = Boolean(result.strict ?? true);
+  const valuesLimit =
+    typeof result.valuesLimit === "number" ? result.valuesLimit : null;
+  const testId = typeof result.testId === "string" ? result.testId : "Unknown";
+  const seriesSummaries = Array.isArray(result.seriesSummaries)
+    ? result.seriesSummaries
+    : [];
+
+  return [
+    {
+      type: "stats",
+      title: "Value array plot summary",
+      data: [
+        { label: "Series", value: String(plottedArrays.length), delta: "plotted" },
+        { label: "Longest line", value: String(longestSeries), delta: "points" },
+        { label: "Mode", value: strict ? "Strict" : "Loose", delta: "matching" },
+        {
+          label: "Limit",
+          value: valuesLimit === null ? "Full" : String(valuesLimit),
+          delta: valuesLimit === null ? "returned" : "per line",
+        },
+      ],
+    },
+    {
+      type: "chart",
+      title: "Test value arrays",
+      subtitle: `Test ${testId}. Each returned value array is shown as a separate line over sample index.`,
+      data: {
+        kind: "line",
+        xKey: "index",
+        yAxisLabel: "Value",
+        points,
+        series: plottedArrays.map((_, seriesIndex) => {
+          const summary = seriesSummaries[seriesIndex];
+          const label =
+            summary && typeof summary === "object" && typeof summary.label === "string"
+              ? summary.label
+              : `Result ${seriesIndex + 1}`;
+
+          return {
+            key: `series_${seriesIndex + 1}`,
+            label,
+          };
+        }),
+      },
+    },
+  ];
+}
+
 export function getSimulatedResponse(input: string, role: UserRole) {
   const lower = input.toLowerCase();
 
@@ -68,6 +155,11 @@ export function deriveAnalysisData(messages: ChatMessage[]): AnalysisData[] {
 
   if (!latestAssistantMessage) {
     return [];
+  }
+
+  const toolDerivedAnalysis = buildValueArrayAnalysis(latestAssistantMessage);
+  if (toolDerivedAnalysis) {
+    return toolDerivedAnalysis;
   }
 
   if (latestAssistantMessage.analysis && latestAssistantMessage.analysis.length > 0) {

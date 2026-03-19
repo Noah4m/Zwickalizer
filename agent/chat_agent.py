@@ -290,9 +290,13 @@ def summarize_value_arrays_tool(arguments: dict[str, Any], result: str) -> ToolE
             for summary in series_summaries
         ],
     }
+    client_result = {
+        **summarized_result,
+        "valueArrays": plotted_arrays,
+    }
     return ToolExecutionResult(
         model_payload={"result": summarized_result},
-        client_result=summarized_result,
+        client_result=client_result,
         analysis=analysis,
     )
 

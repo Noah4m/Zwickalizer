@@ -237,6 +237,7 @@ class ChatAgentTests(unittest.TestCase):
         self.assertEqual(len(response.analysis[1]["data"]["series"]), 2)
         self.assertEqual(response.analysis[1]["data"]["points"][2]["series_1"], None)
         self.assertEqual(response.tool_calls[0]["result"]["plotShownToUser"], True)
+        self.assertEqual(response.tool_calls[0]["result"]["valueArrays"][0][2], None)
         self.assertEqual(response.tool_calls[0]["result"]["seriesSummaries"][0]["min"], 0.0)
         self.assertEqual(response.tool_calls[0]["result"]["seriesSummaries"][1]["max"], 15.0)
 

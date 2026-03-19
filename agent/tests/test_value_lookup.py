@@ -226,6 +226,116 @@ class ValueLookupTests(unittest.TestCase):
         self.assertTrue(resolved[0]["valuesTruncated"])
         self.assertEqual(resolved[0]["valuesCount"], 3)
 
+    def test_resolve_test_value_columns_can_filter_to_value_column_index(self):
+        test_id = "{TEST-4B}"
+        tests_col = FakeCollection(
+            [
+                {
+                    "_id": test_id,
+                    "valueColumns": [
+                        {
+                            "_id": "{COL-4B-A}_Value",
+                            "valueTableId": "{TABLE-4B-A}",
+                            "name": "Strain / Deformation",
+                        },
+                        {
+                            "_id": "{COL-4B-B}_Value",
+                            "valueTableId": "{TABLE-4B-B}",
+                            "name": "Force",
+                        },
+                    ],
+                }
+            ]
+        )
+        values_col = FakeCollection(
+            [
+                {
+                    "_id": "doc-4b-a",
+                    "values": [1, 2, 3],
+                    "metadata": {
+                        "refId": test_id,
+                        "childId": "{TABLE-4B-A}.{COL-4B-A}_Value",
+                    },
+                },
+                {
+                    "_id": "doc-4b-b",
+                    "values": [4, 5, 6],
+                    "metadata": {
+                        "refId": test_id,
+                        "childId": "{TABLE-4B-B}.{COL-4B-B}_Value",
+                    },
+                },
+            ]
+        )
+
+        resolved = value_lookup.resolve_test_value_columns(
+            tests_col,
+            values_col,
+            test_id,
+            include_values=True,
+            value_column_index=0,
+        )
+
+        self.assertEqual(len(resolved), 1)
+        self.assertEqual(resolved[0]["sourceDocumentId"], "doc-4b-a")
+        self.assertEqual(resolved[0]["name"], "Strain / Deformation")
+        self.assertEqual(resolved[0]["values"], [1, 2, 3])
+
+    def test_resolve_test_value_columns_indexed_lookup_keeps_non_value_column(self):
+        test_id = "{TEST-4C}"
+        tests_col = FakeCollection(
+            [
+                {
+                    "_id": test_id,
+                    "valueColumns": [
+                        {
+                            "_id": "{COL-4C-A}",
+                            "valueTableId": "{TABLE-4C-A}",
+                            "name": "Strain / Deformation",
+                        },
+                        {
+                            "_id": "{COL-4C-B}_Value",
+                            "valueTableId": "{TABLE-4C-B}",
+                            "name": "Force",
+                        },
+                    ],
+                }
+            ]
+        )
+        values_col = FakeCollection(
+            [
+                {
+                    "_id": "doc-4c-a",
+                    "values": [0.1, 0.2, 0.3],
+                    "metadata": {
+                        "refId": test_id,
+                        "childId": "{TABLE-4C-A}.{COL-4C-A}",
+                    },
+                },
+                {
+                    "_id": "doc-4c-b",
+                    "values": [4, 5, 6],
+                    "metadata": {
+                        "refId": test_id,
+                        "childId": "{TABLE-4C-B}.{COL-4C-B}_Value",
+                    },
+                },
+            ]
+        )
+
+        resolved = value_lookup.resolve_test_value_columns(
+            tests_col,
+            values_col,
+            test_id,
+            include_values=True,
+            value_column_index=0,
+        )
+
+        self.assertEqual(len(resolved), 1)
+        self.assertEqual(resolved[0]["sourceDocumentId"], "doc-4c-a")
+        self.assertEqual(resolved[0]["valueColumnId"], "{COL-4C-A}")
+        self.assertEqual(resolved[0]["values"], [0.1, 0.2, 0.3])
+
     def test_resolve_test_value_columns_non_strict_returns_all_ref_matches(self):
         test_id = "{TEST-5}"
         tests_col = FakeCollection(
@@ -292,6 +402,44 @@ class ValueLookupTests(unittest.TestCase):
         self.assertTrue(resolved[1]["matchedTestValueColumn"])
         self.assertEqual(resolved[1]["valueColumnId"], "{COL-5}_Key")
         self.assertEqual(resolved[2]["valueColumnId"], "{COL-5}_Value")
+
+    def test_resolve_test_value_columns_invalid_index_returns_no_matches(self):
+        test_id = "{TEST-5B}"
+        tests_col = FakeCollection(
+            [
+                {
+                    "_id": test_id,
+                    "valueColumns": [
+                        {
+                            "_id": "{COL-5B}_Value",
+                            "valueTableId": "{TABLE-5B}",
+                            "name": "Force",
+                        }
+                    ],
+                }
+            ]
+        )
+        values_col = FakeCollection(
+            [
+                {
+                    "_id": "doc-5b",
+                    "values": [11],
+                    "metadata": {
+                        "refId": test_id,
+                        "childId": "{TABLE-5B}.{COL-5B}_Value",
+                    },
+                }
+            ]
+        )
+
+        resolved = value_lookup.resolve_test_value_columns(
+            tests_col,
+            values_col,
+            test_id,
+            value_column_index=3,
+        )
+
+        self.assertEqual(resolved, [])
 
     def test_extract_value_arrays_returns_only_values_lists(self):
         arrays = value_lookup.extract_value_arrays(

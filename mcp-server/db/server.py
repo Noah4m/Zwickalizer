@@ -185,7 +185,9 @@ async def list_tools() -> list[types.Tool]:
                 "Resolve all stored valuecolumns_migrated entries for a single test id "
                 "by joining metadata.refId and metadata.childId. Returns only _Value columns. "
                 "By default this returns metadata and counts only; raw values are opt-in. "
-                "Set strict=false to return every valuecolumns_migrated document for the test refId."
+                "Set strict=false to return every valuecolumns_migrated document for the test refId, "
+                "or pass value_column_index to return only the migrated entry mapped from one "
+                "specific test.valueColumns array position."
             ),
             inputSchema={
                 "type": "object",
@@ -209,6 +211,11 @@ async def list_tools() -> list[types.Tool]:
                         "description": "Maximum number of values to return per matched column when include_values=true.",
                         "minimum": 0,
                     },
+                    "value_column_index": {
+                        "type": "integer",
+                        "description": "Optional zero-based index into test.valueColumns. Example: 0 returns only the migrated entry mapped from test.valueColumns[0].",
+                        "minimum": 0,
+                    },
                 },
                 "required": ["test_id"],
             },
@@ -217,7 +224,8 @@ async def list_tools() -> list[types.Tool]:
             name="get_test_value_arrays",
             description=(
                 "Return the values arrays for a single test id as an array of arrays. "
-                "Use strict=true for validated _Value matches only, or strict=false for all documents with matching metadata.refId."
+                "Use strict=true for validated _Value matches only, or strict=false for all documents with matching metadata.refId. "
+                "Pass value_column_index to return only the array mapped from one specific test.valueColumns entry."
             ),
             inputSchema={
                 "type": "object",
@@ -234,6 +242,11 @@ async def list_tools() -> list[types.Tool]:
                     "values_limit": {
                         "type": "integer",
                         "description": "Maximum number of values to return per matched document.",
+                        "minimum": 0,
+                    },
+                    "value_column_index": {
+                        "type": "integer",
+                        "description": "Optional zero-based index into test.valueColumns. Example: 0 returns only the migrated array mapped from test.valueColumns[0].",
                         "minimum": 0,
                     },
                 },
@@ -279,6 +292,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         strict = bool(arguments.get("strict", True))
         include_values = bool(arguments.get("include_values", False))
         values_limit = arguments.get("values_limit")
+        value_column_index = arguments.get("value_column_index")
         resolved = resolve_test_value_columns(
             tests_col,
             values_col,
@@ -286,6 +300,9 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             strict=strict,
             include_values=include_values,
             values_limit=values_limit if isinstance(values_limit, int) else None,
+            value_column_index=(
+                value_column_index if isinstance(value_column_index, int) else None
+            ),
         )
         if resolved is None:
             return ok(
@@ -298,6 +315,9 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 "strict": strict,
                 "includeValues": include_values,
                 "valuesLimit": values_limit if isinstance(values_limit, int) else None,
+                "valueColumnIndex": (
+                    value_column_index if isinstance(value_column_index, int) else None
+                ),
                 "valueColumns": resolved,
             }
         )
@@ -306,6 +326,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         test_id = arguments["test_id"]
         strict = bool(arguments.get("strict", True))
         values_limit = arguments.get("values_limit")
+        value_column_index = arguments.get("value_column_index")
         resolved = resolve_test_value_columns(
             tests_col,
             values_col,
@@ -313,6 +334,9 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             strict=strict,
             include_values=True,
             values_limit=values_limit if isinstance(values_limit, int) else None,
+            value_column_index=(
+                value_column_index if isinstance(value_column_index, int) else None
+            ),
         )
         if resolved is None:
             return ok({"error": f"Test not found for id: {test_id}", "valueArrays": []})
@@ -322,6 +346,9 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 "strict": strict,
                 "count": len(resolved),
                 "valuesLimit": values_limit if isinstance(values_limit, int) else None,
+                "valueColumnIndex": (
+                    value_column_index if isinstance(value_column_index, int) else None
+                ),
                 "valueArrays": extract_value_arrays(resolved),
             }
         )

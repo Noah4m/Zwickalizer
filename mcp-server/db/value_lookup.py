@@ -61,12 +61,19 @@ def build_child_id(value_column: dict[str, Any]) -> str | None:
 
 
 def build_expected_value_columns(
-    test: dict[str, Any], value_only: bool = True
+    test: dict[str, Any],
+    value_only: bool = True,
+    value_column_index: int | None = None,
 ) -> list[dict[str, Any]]:
     test_id = str(test.get("_id"))
     expected: list[dict[str, Any]] = []
+    value_columns = test.get("valueColumns", []) or []
+    if isinstance(value_column_index, int):
+        if value_column_index < 0 or value_column_index >= len(value_columns):
+            return []
+        value_columns = [value_columns[value_column_index]]
 
-    for value_column in test.get("valueColumns", []) or []:
+    for value_column in value_columns:
         if not isinstance(value_column, dict):
             continue
         if value_only and not is_value_column(value_column):
@@ -134,6 +141,7 @@ def resolve_test_value_columns(
     strict: bool = True,
     include_values: bool = False,
     values_limit: int | None = None,
+    value_column_index: int | None = None,
 ) -> list[dict[str, Any]] | None:
     test = find_test_by_id(
         tests_col,
@@ -143,25 +151,33 @@ def resolve_test_value_columns(
     if test is None:
         return None
 
-    expected = build_expected_value_columns(test, value_only=strict)
-    if strict and not expected:
+    expected = build_expected_value_columns(
+        test,
+        value_only=False if value_column_index is not None else strict,
+        value_column_index=value_column_index,
+    )
+    if (strict or value_column_index is not None) and not expected:
         return []
 
     expected_by_child_id = {entry["childId"]: entry for entry in expected}
     query: dict[str, Any] = {
         "metadata.refId": build_ref_id_query(test["_id"]),
     }
-    if strict:
+    if strict or value_column_index is not None:
         query["metadata.childId"] = {"$in": list(expected_by_child_id)}
 
     docs = list(values_col.find(query))
 
-    if strict:
+    if strict or value_column_index is not None:
         matching_docs = [
             doc
             for doc in docs
             if doc.get("metadata", {}).get("childId") in expected_by_child_id
-            and str(doc.get("metadata", {}).get("childId", "")).endswith("_Value")
+            and (
+                value_column_index is not None
+                or not strict
+                or str(doc.get("metadata", {}).get("childId", "")).endswith("_Value")
+            )
         ]
     else:
         matching_docs = docs

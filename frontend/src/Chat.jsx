@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Message from './Message.jsx'
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || ''
@@ -92,8 +92,8 @@ const s = {
   },
 }
 
-export default function Chat({ exampleQuery, onExampleConsumed, onPlotUpdate }) {
-  const [history, setHistory] = useState([])   // {role, content, toolCalls?}
+export default function Chat({ exampleQuery, onExampleConsumed }) {
+  const [history, setHistory] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const bottomRef = useRef(null)
@@ -134,24 +134,15 @@ export default function Chat({ exampleQuery, onExampleConsumed, onPlotUpdate }) 
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
-      const latestVisualization = Array.isArray(data.visualizations) && data.visualizations.length > 0
-        ? data.visualizations[data.visualizations.length - 1]
-        : null
-
-      if (latestVisualization && onPlotUpdate) {
-        onPlotUpdate(latestVisualization)
-      }
 
       setHistory([...newHistory, {
         role: 'assistant',
         content: data.answer,
-        toolCalls: data.tool_calls || [],
       }])
     } catch (err) {
       setHistory([...newHistory, {
         role: 'assistant',
         content: `⚠ Error: ${err.message}`,
-        toolCalls: [],
       }])
     } finally {
       setLoading(false)
@@ -167,7 +158,7 @@ export default function Chat({ exampleQuery, onExampleConsumed, onPlotUpdate }) 
       {/* Header */}
       <div style={s.header}>
         <div style={s.headerDot} />
-        <span style={s.headerTitle}>agent connected · gemini tool loop</span>
+        <span style={s.headerTitle}>agent connected · gemini chat</span>
       </div>
 
       {/* Messages */}
@@ -181,7 +172,7 @@ export default function Chat({ exampleQuery, onExampleConsumed, onPlotUpdate }) 
         {history.map((msg, i) => (
           <Message key={i} msg={msg} />
         ))}
-        {loading && <Message msg={{ role: 'assistant', content: null, toolCalls: [] }} loading />}
+        {loading && <Message msg={{ role: 'assistant', content: null }} loading />}
         <div ref={bottomRef} />
       </div>
 
@@ -191,7 +182,7 @@ export default function Chat({ exampleQuery, onExampleConsumed, onPlotUpdate }) 
           ref={taRef}
           style={s.textarea}
           rows={2}
-          placeholder="Ask about materials, trends, comparisons…   ↵ send  ⇧↵ newline"
+            placeholder="Ask anything…   ↵ send  ⇧↵ newline"
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={onKeyDown}

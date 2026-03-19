@@ -1,5 +1,3 @@
-import { useState } from 'react'
-
 const s = {
   row: (role) => ({
     display: 'flex',
@@ -28,50 +26,6 @@ const s = {
     textTransform: 'uppercase',
     paddingLeft: role === 'user' ? 0 : '2px',
   }),
-  toolSection: {
-    marginTop: '10px',
-    maxWidth: '72%',
-  },
-  toolToggle: {
-    background: 'none',
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--radius)',
-    color: 'var(--accent3)',
-    fontFamily: 'var(--font-mono)',
-    fontSize: '11px',
-    padding: '4px 10px',
-    cursor: 'pointer',
-    letterSpacing: '0.06em',
-  },
-  toolList: {
-    marginTop: '8px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
-  },
-  toolCall: {
-    background: 'var(--bg3)',
-    border: '1px solid var(--border)',
-    borderLeft: '2px solid var(--accent3)',
-    borderRadius: 'var(--radius)',
-    padding: '8px 12px',
-    fontFamily: 'var(--font-mono)',
-    fontSize: '11px',
-    color: 'var(--text2)',
-  },
-  toolName: {
-    color: 'var(--accent3)',
-    fontWeight: 500,
-    marginBottom: '4px',
-  },
-  toolJson: {
-    color: 'var(--text3)',
-    fontSize: '10px',
-    whiteSpace: 'pre-wrap',
-    wordBreak: 'break-all',
-    maxHeight: '120px',
-    overflowY: 'auto',
-  },
   loading: {
     display: 'flex',
     gap: '5px',
@@ -103,8 +57,7 @@ if (!document.getElementById('matai-anim')) {
 }
 
 export default function Message({ msg, loading }) {
-  const [showTools, setShowTools] = useState(false)
-  const { role, content, toolCalls } = msg
+  const { role, content } = msg
 
   if (loading) {
     return (
@@ -121,35 +74,6 @@ export default function Message({ msg, loading }) {
     <div style={s.row(role)}>
       <div style={s.roleLabel(role)}>{role === 'user' ? 'you' : 'agent'}</div>
       <div style={s.bubble(role)}>{content}</div>
-
-      {/* Tool call audit trail */}
-      {role === 'assistant' && toolCalls?.length > 0 && (
-        <div style={s.toolSection}>
-          <button
-            style={s.toolToggle}
-            onClick={() => setShowTools(v => !v)}
-          >
-            {showTools ? '▾' : '▸'} {toolCalls.length} tool call{toolCalls.length > 1 ? 's' : ''}
-          </button>
-          {showTools && (
-            <div style={s.toolList}>
-              {toolCalls.map((tc, i) => (
-                <div key={i} style={s.toolCall}>
-                  <div style={s.toolName}>{tc.tool}</div>
-                  <div style={{ marginBottom: '4px', fontSize: '10px', color: 'var(--text3)' }}>input</div>
-                  <div style={s.toolJson}>{JSON.stringify(tc.input, null, 2)}</div>
-                  {tc.result && (
-                    <>
-                      <div style={{ marginTop: '6px', marginBottom: '4px', fontSize: '10px', color: 'var(--accent2)' }}>result</div>
-                      <div style={s.toolJson}>{JSON.stringify(tc.result, null, 2)}</div>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 }

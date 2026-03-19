@@ -1,10 +1,8 @@
 const EXAMPLES = [
-  { label: 'List materials', query: 'What materials are available in the database?' },
-  { label: 'Summarise property', query: 'Summarise all tensile strength data for Fancyplast 42' },
-  { label: 'Trend analysis', query: 'Is there a decreasing trend in tensile strength for Fancyplast 42 over the last 6 months?' },
-  { label: 'Machine comparison', query: 'How do Machine A and Machine B differ for tensile strength of Fancyplast 42? Are the differences statistically significant?' },
-  { label: 'Correlation check', query: 'Does temperature correlate with elongation for Fancyplast 42?' },
-  { label: 'Boundary risk', query: 'Is there an indication that tensile strength for Fancyplast 42 will violate the lower boundary of 45 MPa in the future?' },
+  { label: 'Explain a result', query: 'Explain what tensile strength means in simple terms.' },
+  { label: 'Summarise text', query: 'Summarise the difference between tensile strength and elongation.' },
+  { label: 'Draft an email', query: 'Write a short email asking a colleague for the latest material test results.' },
+  { label: 'Brainstorm ideas', query: 'Give me five ideas for improving a material testing workflow.' },
 ]
 
 const s = {
@@ -96,7 +94,7 @@ export default function Sidebar({ onSelectExample }) {
       </div>
 
       <div style={s.footer}>
-        v0.1 · docker stack
+        v0.1 · simple chat stack
       </div>
     </aside>
   )

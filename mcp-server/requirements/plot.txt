@@ -1,2 +1,0 @@
-# Plot server currently returns a structured chart payload, so it has no
-# extra dependencies beyond the FastAPI base set.

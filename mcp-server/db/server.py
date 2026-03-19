@@ -163,6 +163,7 @@ def collect_property_values(test_ids: list[str], column_name: str) -> list[dict]
 
 # Minimal projection — always exclude raw value arrays unless requested
 META_PROJ = {
+    "name": 1,
     "TestParametersFlat": 1,
     "valueColumns._id": 1,
     "valueColumns.valueTableId": 1,
@@ -175,15 +176,19 @@ def format_test(d: dict) -> dict:
     fp = d.get("TestParametersFlat", {})
     return {
         "testId": str(d["_id"]),
+        "name": d.get("name"),
         "date": fp.get("date").isoformat() if fp.get("date") else None,
         "material": fp.get("MATERIAL"),
         "testType": fp.get("TYPE_OF_TESTING_STR"),
-        "machine": fp.get("MACHINE"),
+        "machine": fp.get("MACHINE_DATA"),
         "tester": fp.get("TESTER"),
         "customer": fp.get("CUSTOMER"),
-        "standard": fp.get("standard"),
+        "standard": fp.get("STANDARD"),
         "specimenWidth": fp.get("SPECIMEN_WIDTH"),
         "diameter": fp.get("DIAMETER"),
+        "machine_type_str": fp.get("MACHINE_TYPE_STR"),
+        "notes": fp.get("NOTES"),
+        "testSpeed": fp.get("TEST_SPEED"),
         "availableColumns": [
             c["name"] for c in d.get("valueColumns", []) if "name" in c
         ],
@@ -217,24 +222,64 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="find_tests",
-            description="Find tests for given filters such as test type, customer, material, and exact date or date range.",
+            description=(
+                "Search for material tests in the database using one or more filters. "
+                "All filters are optional and combined with AND logic. "
+                "Returns the 10 most recent matching tests sorted by date descending. "
+                "Use list_customers to discover valid customer names before filtering. "
+                "Supports exact date matching or open/closed date ranges. "
+                "Use id to look up a single specific test directly. "
+                "Use name to filter tests that contain a specific value column such as 'force' or 'displacement'."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "testType": {"type": "string"},
-                    "customer": {"type": "string"},
-                    "material": {"type": "string"},
+                    "id": {
+                        "type": "string",
+                        "description": "Exact match on the test _id, e.g. '641a7c8f9f1b2c3d4e5f6789'. Use this to look up a single known test directly.",
+                    },
+                    "testType": {
+                        "type": "string",
+                        "description": "Filter by test type, e.g. 'Tensile test'. Exact match on TYPE_OF_TESTING_STR.",
+                    },
+                    "customer": {
+                        "type": "string",
+                        "description": "Filter by customer name. Use list_customers to find valid values. Exact match on CUSTOMER.",
+                    },
+                    "material": {
+                        "type": "string",
+                        "description": "Filter by material designation, e.g. '7075-T6'. Exact match on MATERIAL.",
+                    },
+                    "tester": {
+                        "type": "string",
+                        "description": "Filter by the name of the person who ran the test. Exact match on TESTER.",
+                    },
+                    "machine_nr": {
+                        "type": "string",
+                        "description": "Filter by machine identifier, e.g. 'Zwick1'. Exact match on MACHINE.",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Filter by the test name. Exact match on the top-level name field of the test document.",
+                    },
                     "date": {
                         "type": "string",
-                        "description": "Exact ISO date such as '2026-03-19'. Matches the full UTC day.",
+                        "description": "Exact date in ISO format, e.g. '2026-03-19'. Matches all tests within that UTC day. Cannot be combined with date_from or date_to.",
                     },
                     "date_from": {
                         "type": "string",
-                        "description": "Inclusive ISO start date or datetime such as '2026-03-01'.",
+                        "description": "Inclusive start of a date range in ISO format, e.g. '2026-03-01'.",
                     },
                     "date_to": {
                         "type": "string",
-                        "description": "Inclusive ISO end date or datetime such as '2026-03-19'.",
+                        "description": "Inclusive end of a date range in ISO format, e.g. '2026-03-31'.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return. Defaults to 10, maximum 50.",
+                        "default": 10,
+                        "minimum": 1,
+                        "maximum": 50,
                     },
                 },
             },
@@ -332,12 +377,29 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
     if name == "find_tests":
         filters = {}
+
+        if "id" in arguments:
+
+            try:
+                filters["_id"] = ObjectId(arguments["id"])
+            except Exception:
+                return ok(
+                    {"error": f"Invalid test id format: {arguments['id']}", "tests": []}
+                )
+
         if "testType" in arguments:
             filters["TestParametersFlat.TYPE_OF_TESTING_STR"] = arguments["testType"]
         if "customer" in arguments:
             filters["TestParametersFlat.CUSTOMER"] = arguments["customer"]
         if "material" in arguments:
             filters["TestParametersFlat.MATERIAL"] = arguments["material"]
+        if "tester" in arguments:
+            filters["TestParametersFlat.TESTER"] = arguments["tester"]
+        if "machine_nr" in arguments:
+            filters["TestParametersFlat.MACHINE_DATA"] = arguments["machine_nr"]
+        if "name" in arguments:
+            filters["name"] = arguments["name"]
+
         date_filter = build_test_date_filter(
             arguments.get("date"),
             arguments.get("date_from"),
@@ -346,13 +408,21 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         if date_filter:
             filters["TestParametersFlat.date"] = date_filter
 
+        limit = min(int(arguments.get("limit", 10)), 50)
+
         cursor = (
             tests_col.find(filters, META_PROJ)
             .sort("TestParametersFlat.date", -1)
-            .limit(5)
+            .limit(limit)
         )
         results = [format_test(d) for d in cursor]
-        return ok({"tests": results})
+        return ok(
+            {
+                "tests": results,
+                "count": len(results),
+                "filters_applied": list(filters.keys()),
+            }
+        )
 
     if name == "get_test_value_columns":
         test_id = arguments["test_id"]

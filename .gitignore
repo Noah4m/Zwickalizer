@@ -17,6 +17,7 @@ __pycache__/
 htmlcov/
 .tox/
 .nox/
+agent/log.csv
 
 # Virtual environments
 .venv/

@@ -33,3 +33,16 @@ If your local `.env` already uses `OPEN_API_KEY`, the agent will still accept it
 MongoDB note:
 By default, the agent container connects to MongoDB on your host via `host.docker.internal`.
 If your database runs in another container, override `MONGO_URI` to that container hostname on the same Docker network.
+
+# For Faster Join of the two collections
+Within MongoDB compass Shell:
+```
+db.getName()
+use txp_clean
+db.getName()
+db.valuecolumns_migrated.getIndexes()
+db.valuecolumns_migrated.createIndex(
+  { "metadata.refId": 1, "metadata.childId": 1 },
+  { name: "refId_childId_idx" }
+)
+```

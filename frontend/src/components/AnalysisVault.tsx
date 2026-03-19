@@ -81,6 +81,7 @@ function StatsSection({ title, stats }: { title: string; stats: AnalysisStat[] }
 }
 
 function ChartSection({ title, subtitle, chart }: { title: string; subtitle?: string; chart: AnalysisChartData }) {
+  console.log("Rendering ChartSection with data:", chart);
   const isBar = chart.kind === "bar";
   const Chart = isBar ? BarChart : LineChart;
 
@@ -91,7 +92,7 @@ function ChartSection({ title, subtitle, chart }: { title: string; subtitle?: st
         {subtitle && <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>}
       </div>
       <ResponsiveContainer width="100%" height={220}>
-        <Chart data={chart.points}>
+        <Chart data={chart.points} margin={{ top: 5, right: 10, left: 60, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
           <XAxis
             dataKey={chart.xKey}
@@ -102,10 +103,22 @@ function ChartSection({ title, subtitle, chart }: { title: string; subtitle?: st
             minTickGap={24}
           />
           <YAxis
+            width={80}
             type="number"
             domain={["auto", "auto"]}
+            tickFormatter={(value: number) => {
+              if (!Number.isFinite(value)) return "";
+              const abs = Math.abs(value);
+              if (abs === 0) return "0";
+              if (abs < 0.001 || abs >= 100_000) return value.toExponential(2);
+              return value.toPrecision(3);
+            }}
             tick={{ fill: mutedColor, fontSize: 11, fontFamily: "JetBrains Mono" }}
-            label={chart.yAxisLabel ? { value: chart.yAxisLabel, angle: -90, position: "insideLeft", fill: mutedColor, fontSize: 10 } : undefined}
+            label={
+                chart.yAxisLabel
+                  ? { value: chart.yAxisLabel, angle: -90, position: "insideLeft", offset: -10, dy: 60, fill: mutedColor, fontSize: 10 }
+                  : undefined
+              }
           />
           <Tooltip
             contentStyle={{

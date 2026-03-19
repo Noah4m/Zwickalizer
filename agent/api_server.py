@@ -1,3 +1,4 @@
+# FastAPI entrypoint: exposes HTTP routes and delegates chat work to the LLM agent.
 import json
 import os
 import traceback
@@ -7,7 +8,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field
 
-from llm_agent import MCPEnabledChatAgent
+from chat_agent import MCPEnabledChatAgent
 from mcp_client import MCPToolbox
 
 

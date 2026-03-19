@@ -2,7 +2,7 @@ services:
   agent:
     build: ./agent
     container_name: matai-agent
-    command: uvicorn agent:app --host 0.0.0.0 --port 8003 --reload
+    command: uvicorn api_server:app --host 0.0.0.0 --port 8003 --reload
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPEN_API_KEY: ${OPEN_API_KEY}

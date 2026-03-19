@@ -1,3 +1,4 @@
+# LLM orchestration layer: builds prompts, calls OpenAI, and runs MCP tools when needed.
 import json
 from typing import Any, List
 

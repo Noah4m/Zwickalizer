@@ -50,9 +50,7 @@ db = mongo_client[MONGO_DB]
 tests_col: Collection = db["_tests"]
 values_col: Collection = db["valuecolumns_migrated"]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOIN HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── Helpers ──────────────────────────────────────────────────────────────────
 
 
 def resolve_column(test_id: str, value_column: dict) -> list[float]:
@@ -114,10 +112,11 @@ def collect_property_values(test_ids: list[str], column_name: str) -> list[dict]
             )
     return results
 
+
 # Minimal projection — always exclude raw value arrays unless requested
 META_PROJ = {
     "TestParametersFlat": 1,
-    "valueColumns.name": 1,
+    "valueColumns._id": 1,
     "valueColumns.valueTableId": 1,
     "valueColumns.name": 1,
     "valueColumns.unitTableId": 1,
@@ -127,152 +126,56 @@ META_PROJ = {
 def format_test(d: dict) -> dict:
     fp = d.get("TestParametersFlat", {})
     return {
-        "testId": d["_id"],  # plain string, not ObjectId
-        "date": fp.get("date"),
+        "testId": str(d["_id"]),
+        "date": fp.get("date").isoformat() if fp.get("date") else None,
         "material": fp.get("MATERIAL"),
         "testType": fp.get("TYPE_OF_TESTING_STR"),
-        "customer": fp.get("CUSTOMER"),
+        "machine": fp.get("MACHINE"),
         "tester": fp.get("TESTER"),
-        "availableSignals": [
+        "customer": fp.get("CUSTOMER"),
+        "standard": fp.get("standard"),
+        "specimenWidth": fp.get("SPECIMEN_WIDTH"),
+        "diameter": fp.get("DIAMETER"),
+        "availableColumns": [
             c["name"] for c in d.get("valueColumns", []) if "name" in c
         ],
     }
 
 
-def ok(data: dict):
+def ok(data: dict) -> list[types.TextContent]:
     return [
         types.TextContent(type="text", text=json.dumps(data, indent=2, default=str))
     ]
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MCP SERVER
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── MCP Server ───────────────────────────────────────────────────────────────
 
-server = Server("material-testing-analytics")
+server = Server("material-testing-mcp")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TIER 1 — Data selection & retrieval
+# ═════════════════════════════════════════════════════════════════════════════
 
 
 @server.list_tools()
-async def list_tools():
+async def list_tools() -> list[types.Tool]:
     return [
+        # ── Discovery ─────────────────────────────────────────────────────────
         types.Tool(
             name="list_customers",
-            description="List all distinct customers in the database.",
-            inputSchema={"type": "object", "properties": {}},
-        ),
-        types.Tool(
-            name="list_signals",
-            description=(
-                "List all distinct signal names (value column names) available. "
-                "Always call this before find_extreme_tests to get valid signal names."
-            ),
+            description="List all distinct customer names in the database.",
             inputSchema={"type": "object", "properties": {}},
         ),
         types.Tool(
             name="find_tests",
-            description=(
-                "Find tests by optional filters. "
-                "All parameters are optional — omit any to return all."
-            ),
+            description="Find tests for given filters (test type, date, customer, material)",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "customer": {"type": "string", "description": "Partial match"},
-                    "material": {"type": "string", "description": "Partial match"},
-                    "testType": {"type": "string", "description": "Partial match"},
-                    "limit": {"type": "integer", "default": 50},
-                },
-            },
-        ),
-        types.Tool(
-            name="get_test_summary",
-            description=(
-                "Get full analytics for a single test: "
-                "features (min/max/mean/std/p5/p95) and downsampled curve for every signal. "
-                "Get testId from find_tests first."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "test_id": {"type": "string"},
-                },
-                "required": ["test_id"],
-            },
-        ),
-        types.Tool(
-            name="compare_tests",
-            description=(
-                "Compare multiple tests on a single signal. "
-                "Returns features and downsampled curve per test. "
-                "Get testIds from find_tests first."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "test_ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of testId strings from find_tests",
-                    },
-                    "signal": {
-                        "type": "string",
-                        "description": "Signal name from list_signals, e.g. 'Strain / Deformation'",
-                    },
-                },
-                "required": ["test_ids", "signal"],
-            },
-        ),
-        types.Tool(
-            name="find_extreme_tests",
-            description=(
-                "Find tests with the highest or lowest value for a signal. "
-                "Returns a ranked list with statistical features. "
-                "Call list_signals first to get valid signal names."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "signal": {
-                        "type": "string",
-                        "description": "Signal name from list_signals",
-                    },
-                    "mode": {
-                        "type": "string",
-                        "enum": ["max", "min"],
-                        "description": "Find highest or lowest values. Default: max",
-                    },
-                    "feature": {
-                        "type": "string",
-                        "enum": ["max", "min", "mean", "p95", "p5"],
-                        "description": "Statistic to rank by. Default: max",
-                    },
-                    "customer": {"type": "string", "description": "Optional filter"},
-                    "material": {"type": "string", "description": "Optional filter"},
-                    "top_n": {
-                        "type": "integer",
-                        "description": "Results to return. Default: 10",
-                    },
-                    "scan_limit": {
-                        "type": "integer",
-                        "description": "Max candidates to scan. Default: 200.",
-                    },
-                },
-                "required": ["signal"],
-            },
-        ),
-        types.Tool(
-            name="debug_join",
-            description=(
-                "Verify the join between _tests and valuecolumns_migrated. "
-                "Use if signals are returning empty values."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "test_id": {
-                        "type": "string",
-                        "description": "Optional specific test ID",
-                    },
+                    "testType": {"type": "string"},
+                    "customer": {"type": "string"},
+                    "material": {"type": "string"},
                 },
             },
         ),
@@ -354,12 +257,6 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         vals = sorted(tests_col.distinct("TestParametersFlat.CUSTOMER"))
         return ok({"customers": vals})
 
-    # ── list_signals ─────────────────────────────────────────────────────────
-    if name == "list_signals":
-        vals = sorted(tests_col.distinct("valueColumns.name"))
-        return ok({"signals": vals})
-
-    # ── find_tests ───────────────────────────────────────────────────────────
     if name == "find_tests":
         filters = {}
         if "testType" in arguments:
@@ -391,7 +288,9 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             values_limit=values_limit if isinstance(values_limit, int) else None,
         )
         if resolved is None:
-            return ok({"error": f"Test not found for id: {test_id}", "valueColumns": []})
+            return ok(
+                {"error": f"Test not found for id: {test_id}", "valueColumns": []}
+            )
         return ok(
             {
                 "testId": test_id,
@@ -430,30 +329,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     return ok({"error": f"Unknown tool: {name}"})
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CALL TOOL — wraps every call with a 60s timeout
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-@server.call_tool()
-async def call_tool(name: str, arguments: dict):
-    try:
-        return await asyncio.wait_for(_handle(name, arguments), timeout=60.0)
-    except asyncio.TimeoutError:
-        return ok(
-            {
-                "error": "Tool timed out after 60s",
-                "hint": (
-                    "Reduce scope: add customer/material filters, "
-                    "lower scan_limit, or call list_signals first"
-                ),
-            }
-        )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ENTRY
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── Entry point ──────────────────────────────────────────────────────────────
 
 
 async def main():

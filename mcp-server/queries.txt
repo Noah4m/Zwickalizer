@@ -1,0 +1,17 @@
+/list_materials_for_test
+/
+
+
+Queries:
+/get_result_for_test_date_material
+/get_result_for_test_date
+
+
+/get_all_available_material_for_customer_and_test
+/get_specific_available_material_for_customer_and_test
+/list_charpy_impact_test_by_tester
+
+/get_material_property_for_material
+/get_speciic_material_property_for_material
+/get_machine
+/get_quality_outcome_on_site

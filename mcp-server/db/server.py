@@ -7,7 +7,7 @@ from bson import json_util
 from pymongo import MongoClient
 
 
-MONGO_URI = os.environ.get("MONGO_URI", "mongodb://host.docker.internal:27017")
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://txp-database:27017")
 MONGO_DB = os.environ.get("MONGO_DB", "test")
 
 mongo = MongoClient(MONGO_URI, serverSelectionTimeoutMS=2000)

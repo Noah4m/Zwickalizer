@@ -218,19 +218,7 @@ export default function ChatInterface() {
               {activeWorkspace === "chat" ? (
                 <BrandMark compact />
               ) : (
-                <>
-                  <div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/12 text-primary shadow-[var(--shadow-soft)]">
-                    <AlertTriangle className="h-5 w-5" />
-                  </div>
-                  <div>
-                  <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
-                    Outlier Review
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Step through suspicious tests, inspect context, and decide what to do next.
-                  </p>
-                  </div>
-                </>
+                <BrandMark compact />
               )}
             </div>
 

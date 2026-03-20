@@ -326,6 +326,143 @@ class ChatAgentTests(unittest.TestCase):
         self.assertTrue(summary["sampledDown"])
         self.assertEqual(summary["points"], len(large_values))
 
+    def test_compare_two_tests_tool_adds_test_ids_to_series_labels(self):
+        final_answer = "I compared the two force curves."
+        responses = [
+            FakeResponse(
+                FakeMessage(
+                    "Let me compare the two tests.",
+                    tool_calls=[
+                        FakeToolCall(
+                            "call_1",
+                            "db_compare_two_tests",
+                            {
+                                "test_id_1": "{T-500-A}",
+                                "test_id_2": "{T-500-B}",
+                                "value_column_index": 0,
+                            },
+                        )
+                    ],
+                )
+            ),
+            FakeResponse(FakeMessage(final_answer)),
+        ]
+        client = FakeClient(responses)
+        toolbox = FakeToolbox(
+            json.dumps(
+                {
+                    "testIds": ["{T-500-A}", "{T-500-B}"],
+                    "strict": True,
+                    "includeValues": True,
+                    "count": 2,
+                    "valueColumnIndex": 0,
+                    "valueColumns": [
+                        {
+                            "testId": "{T-500-A}",
+                            "name": "Force",
+                            "childId": "{TABLE-A}.{COL-A}_Value",
+                            "sourceDocumentId": "doc-a",
+                            "values": [1, 2, 3],
+                        },
+                        {
+                            "testId": "{T-500-B}",
+                            "name": "Force",
+                            "childId": "{TABLE-B}.{COL-B}_Value",
+                            "sourceDocumentId": "doc-b",
+                            "values": [2, 3, 4],
+                        },
+                    ],
+                }
+            ),
+            tool_name="db_compare_two_tests",
+            description="Return value columns for two tests in one comparison.",
+        )
+        agent = MCPEnabledChatAgent(
+            api_key="test-key",
+            model="test-model",
+            mcp_server_root="/tmp/mcp",
+            client=client,
+            toolbox_factory=lambda _: toolbox,
+        )
+
+        response = agent.respond("compare the first force curves", "engineer", [])
+
+        self.assertEqual(response.answer, final_answer)
+        self.assertEqual(
+            response.tool_calls[0]["result"]["seriesSummaries"][0]["label"],
+            "Force ({T-500-A})",
+        )
+        self.assertEqual(
+            response.tool_calls[0]["result"]["seriesSummaries"][1]["label"],
+            "Force ({T-500-B})",
+        )
+        self.assertEqual(
+            response.tool_calls[0]["result"]["testIds"],
+            ["{T-500-A}", "{T-500-B}"],
+        )
+
+    def test_compare_two_tests_tool_without_index_still_summarizes_two_curves(self):
+        final_answer = "I compared the first curves."
+        responses = [
+            FakeResponse(
+                FakeMessage(
+                    "Let me compare the two tests.",
+                    tool_calls=[
+                        FakeToolCall(
+                            "call_1",
+                            "db_compare_two_tests",
+                            {
+                                "test_id_1": "{T-501-A}",
+                                "test_id_2": "{T-501-B}",
+                            },
+                        )
+                    ],
+                )
+            ),
+            FakeResponse(FakeMessage(final_answer)),
+        ]
+        client = FakeClient(responses)
+        toolbox = FakeToolbox(
+            json.dumps(
+                {
+                    "testIds": ["{T-501-A}", "{T-501-B}"],
+                    "strict": True,
+                    "includeValues": True,
+                    "count": 2,
+                    "valueColumnIndex": 0,
+                    "valueColumns": [
+                        {
+                            "testId": "{T-501-A}",
+                            "name": "Force",
+                            "sourceDocumentId": "doc-a",
+                            "values": [1, 2],
+                        },
+                        {
+                            "testId": "{T-501-B}",
+                            "name": "Force",
+                            "sourceDocumentId": "doc-b",
+                            "values": [2, 3],
+                        },
+                    ],
+                }
+            ),
+            tool_name="db_compare_two_tests",
+            description="Return one value column for two tests in one comparison.",
+        )
+        agent = MCPEnabledChatAgent(
+            api_key="test-key",
+            model="test-model",
+            mcp_server_root="/tmp/mcp",
+            client=client,
+            toolbox_factory=lambda _: toolbox,
+        )
+
+        response = agent.respond("compare the two tests", "engineer", [])
+
+        self.assertEqual(response.answer, final_answer)
+        self.assertEqual(len(response.tool_calls[0]["result"]["seriesSummaries"]), 2)
+        self.assertEqual(response.tool_calls[0]["result"]["valueColumnIndex"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

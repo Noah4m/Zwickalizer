@@ -241,6 +241,16 @@ class MCPToolbox:
                 "The correct format is `{D1CB87C7-D89F-4583-9DA8-5372DC59F25A}` and the braces are part of the id. "
                 "Never remove the braces."
             )
+        if tool.public_name == "db_compare_two_tests":
+            description += (
+                " In this chat UI, this tool returns plottable value data for both tests in one shared comparison chart. "
+                "Use it when the user wants two test curves overlaid in the same coordinate space. "
+                "This tool is intended to compare one corresponding value column from each test, not every column. "
+                "Pass the same `value_column_index` once to select the corresponding column from both tests; if omitted, it defaults to index 0. "
+                "When calling it, both `test_id_1` and `test_id_2` must preserve the exact surrounding curly braces. "
+                "The correct format is `{D1CB87C7-D89F-4583-9DA8-5372DC59F25A}` and the braces are part of the id. "
+                "Never remove the braces."
+            )
         return description
 
     def call(self, public_name: str, arguments: dict[str, Any]) -> str:

@@ -45,6 +45,7 @@ from value_lookup import (
     find_test_by_id,
     find_value_column_by_name,
     numeric_values,
+    resolve_multiple_test_value_columns,
     resolve_test_value_columns,
     resolve_value_column_documents,
 )
@@ -338,6 +339,48 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["test_id"],
             },
         ),
+        types.Tool(
+            name="compare_two_tests",
+            description=(
+                "Resolve one corresponding value column for two test ids and return "
+                "both curves together for a shared comparison plot. Pass one shared "
+                "value_column_index to select the same test.valueColumns position from both tests. "
+                "If value_column_index is omitted, the first value column (index 0) is compared. "
+                "The same strict and values_limit behavior as get_test_value_columns applies to both tests. "
+                "IMPORTANT: both test ids must include the literal surrounding curly braces, "
+                "for example `{D1CB87C7-D89F-4583-9DA8-5372DC59F25A}`."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "test_id_1": {
+                        "type": "string",
+                        "description": "The first exact `_tests._id` value to compare, including the surrounding curly braces.",
+                    },
+                    "test_id_2": {
+                        "type": "string",
+                        "description": "The second exact `_tests._id` value to compare, including the surrounding curly braces.",
+                    },
+                    "strict": {
+                        "type": "boolean",
+                        "description": "When true, only return validated _Value matches from each test.valueColumns. When false, return all documents with metadata.refId matching each test id.",
+                        "default": True,
+                    },
+                    "values_limit": {
+                        "type": "integer",
+                        "description": "Maximum number of values to return per matched column.",
+                        "minimum": 0,
+                    },
+                    "value_column_index": {
+                        "type": "integer",
+                        "description": "Optional zero-based index into each test.valueColumns array. Example: 0 compares only the migrated entry mapped from test.valueColumns[0] for both tests. Defaults to 0 when omitted.",
+                        "minimum": 0,
+                        "default": 0,
+                    },
+                },
+                "required": ["test_id_1", "test_id_2"],
+            },
+        ),
     ]
 
 
@@ -447,6 +490,41 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 "valueColumns": resolved,
             }
         )
+
+    if name == "compare_two_tests":
+        test_ids = [arguments["test_id_1"], arguments["test_id_2"]]
+        strict = bool(arguments.get("strict", True))
+        values_limit = arguments.get("values_limit")
+        value_column_index = arguments.get("value_column_index")
+        effective_value_column_index = (
+            value_column_index if isinstance(value_column_index, int) else 0
+        )
+        resolved = resolve_multiple_test_value_columns(
+            tests_col,
+            values_col,
+            test_ids,
+            strict=strict,
+            include_values=True,
+            values_limit=values_limit if isinstance(values_limit, int) else None,
+            value_column_index=effective_value_column_index,
+        )
+        payload = {
+            "testIds": test_ids,
+            "count": len(resolved["valueColumns"]),
+            "strict": strict,
+            "includeValues": True,
+            "valuesLimit": values_limit if isinstance(values_limit, int) else None,
+            "valueColumnIndex": effective_value_column_index,
+            "missingTestIds": resolved["missingTestIds"],
+            "valueColumns": resolved["valueColumns"],
+        }
+        if resolved["missingTestIds"]:
+            payload["error"] = (
+                "Test not found for id"
+                + ("s" if len(resolved["missingTestIds"]) > 1 else "")
+                + f": {', '.join(resolved['missingTestIds'])}"
+            )
+        return ok(payload)
 
     return ok({"error": f"Unknown tool: {name}"})
 

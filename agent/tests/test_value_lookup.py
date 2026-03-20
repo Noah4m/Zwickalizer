@@ -462,6 +462,75 @@ class ValueLookupTests(unittest.TestCase):
 
         self.assertEqual(value_column["_id"], "{COL-3}_Value")
 
+    def test_resolve_multiple_test_value_columns_combines_two_tests(self):
+        test_id_1 = "{TEST-6A}"
+        test_id_2 = "{TEST-6B}"
+        tests_col = FakeCollection(
+            [
+                {
+                    "_id": test_id_1,
+                    "valueColumns": [
+                        {
+                            "_id": "{COL-6A}_Value",
+                            "valueTableId": "{TABLE-6A}",
+                            "name": "Force",
+                        }
+                    ],
+                },
+                {
+                    "_id": test_id_2,
+                    "valueColumns": [
+                        {
+                            "_id": "{COL-6B}_Value",
+                            "valueTableId": "{TABLE-6B}",
+                            "name": "Force",
+                        }
+                    ],
+                },
+            ]
+        )
+        values_col = FakeCollection(
+            [
+                {
+                    "_id": "doc-6a",
+                    "values": [1, 2, 3],
+                    "metadata": {
+                        "refId": test_id_1,
+                        "childId": "{TABLE-6A}.{COL-6A}_Value",
+                    },
+                },
+                {
+                    "_id": "doc-6b",
+                    "values": [4, 5, 6],
+                    "metadata": {
+                        "refId": test_id_2,
+                        "childId": "{TABLE-6B}.{COL-6B}_Value",
+                    },
+                },
+            ]
+        )
+
+        resolved = value_lookup.resolve_multiple_test_value_columns(
+            tests_col,
+            values_col,
+            [test_id_1, test_id_2],
+            include_values=True,
+            value_column_index=0,
+        )
+
+        self.assertEqual(resolved["missingTestIds"], [])
+        self.assertEqual(len(resolved["valueColumns"]), 2)
+        self.assertEqual(
+            [item["testId"] for item in resolved["valueColumns"]],
+            [test_id_1, test_id_2],
+        )
+        self.assertEqual(
+            [item["comparisonOrder"] for item in resolved["valueColumns"]],
+            [0, 1],
+        )
+        self.assertEqual(resolved["valueColumns"][0]["values"], [1, 2, 3])
+        self.assertEqual(resolved["valueColumns"][1]["values"], [4, 5, 6])
+
     def test_numeric_values_keeps_ints_and_floats_but_not_bools(self):
         values = value_lookup.numeric_values([1, 2.5, True, "3", None, 4])
         self.assertEqual(values, [1, 2.5, 4])

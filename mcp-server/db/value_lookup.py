@@ -227,6 +227,53 @@ def resolve_test_value_columns(
     return results
 
 
+def resolve_multiple_test_value_columns(
+    tests_col: Any,
+    values_col: Any,
+    test_ids: list[Any],
+    strict: bool = True,
+    include_values: bool = False,
+    values_limit: int | None = None,
+    value_column_index: int | None = None,
+) -> dict[str, Any]:
+    resolved_columns: list[dict[str, Any]] = []
+    missing_test_ids: list[str] = []
+
+    for order, test_id in enumerate(test_ids):
+        resolved = resolve_test_value_columns(
+            tests_col,
+            values_col,
+            test_id,
+            strict=strict,
+            include_values=include_values,
+            values_limit=values_limit,
+            value_column_index=value_column_index,
+        )
+        if resolved is None:
+            missing_test_ids.append(str(test_id))
+            continue
+
+        for column in resolved:
+            resolved_columns.append(
+                {
+                    **column,
+                    "comparisonOrder": order,
+                }
+            )
+
+    resolved_columns.sort(
+        key=lambda item: (
+            item.get("comparisonOrder", 0),
+            item.get("childId"),
+            item.get("sourceDocumentId"),
+        )
+    )
+    return {
+        "valueColumns": resolved_columns,
+        "missingTestIds": missing_test_ids,
+    }
+
+
 def numeric_values(values: list[Any]) -> list[float]:
     return [
         value

@@ -75,6 +75,20 @@ function normalizeSampledSeries(
   }));
 }
 
+function normalizeComparisonSeries(
+  points: Array<{ index: number; value: number | null }>,
+): Array<{ index: number; value: number | null }> {
+  const finitePoints = points.filter(
+    (point): point is { index: number; value: number } =>
+      point.value !== null && isFiniteNumber(point.value),
+  );
+
+  return finitePoints.map((point, index) => ({
+    index,
+    value: point.value,
+  }));
+}
+
 function buildChartPoints(
   series: Array<{ key: string; points: Array<{ index: number; value: number | null }> }>,
 ) {
@@ -95,7 +109,8 @@ function buildChartPoints(
 function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null {
   const toolCall = [...(message.toolCalls ?? [])]
     .reverse()
-    .find((entry) => entry.name === "db_get_test_value_columns");
+    .find((entry) =>
+      entry.name === "db_get_test_value_columns" || entry.name === "db_compare_two_tests");
 
   if (!toolCall || typeof toolCall.result !== "object" || toolCall.result === null) {
     return null;
@@ -109,6 +124,15 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
   const seriesSummaries = Array.isArray(result.seriesSummaries)
     ? result.seriesSummaries
     : [];
+  const testIds = Array.isArray(result.testIds)
+    ? result.testIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : typeof result.testId === "string"
+      ? [result.testId]
+      : [];
+  const comparisonMode =
+    toolCall.name === "db_compare_two_tests" ||
+    Boolean(result.comparisonMode) ||
+    testIds.length > 1;
 
   const plottedColumns = rawValueColumns
     .map((entry) => (typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : null))
@@ -143,6 +167,10 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
         unitTableId: typeof entry.unitTableId === "string" ? entry.unitTableId : undefined,
       };
     })
+    .map((entry) => ({
+      ...entry,
+      points: comparisonMode ? normalizeComparisonSeries(entry.points) : entry.points,
+    }))
     .filter((entry) => entry.points.length > 0);
 
   if (plottedColumns.length === 0) {
@@ -195,12 +223,21 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
     visibleColumns.every((column) => column.unitTableId === visibleColumns[0].unitTableId)
       ? visibleColumns[0].unitTableId
       : undefined;
-  const signalLabel = visibleColumns[0]?.label ?? "Value columns";
   const summaryStats = seriesSummaries
     .map((summary) =>
       summary && typeof summary === "object" ? (summary as Record<string, unknown>) : null,
     )
     .filter((summary): summary is Record<string, unknown> => summary !== null);
+  const signalNames = Array.from(
+    new Set(
+      summaryStats
+        .map((summary) => summary.name)
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0),
+    ),
+  );
+  const signalLabel = signalNames.length === 1
+    ? signalNames[0]
+    : visibleColumns[0]?.label ?? "Value columns";
   const summaryMaxValues = summaryStats
     .map((summary) => summary.max)
     .filter((value): value is number => isFiniteNumber(value));
@@ -220,11 +257,21 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
     : sampledValues.length > 0
       ? Math.min(...sampledValues)
       : null;
+  const testLabel = comparisonMode
+    ? testIds.join(" vs ")
+    : testId;
+  const chartTitle = comparisonMode ? "Compared test value columns" : "Test value columns";
+  const statsTitle = comparisonMode ? "Value column comparison summary" : "Value column plot summary";
+  const chartSubtitle = hiddenSeriesCount > 0
+    ? `${comparisonMode ? `Comparing tests ${testLabel}` : `Test ${testLabel}`}. Showing the first ${visibleColumns.length} of ${plottedColumns.length} returned value columns to keep the chart readable. ${sampledPointCount} points per visible series were kept for plotting.`
+    : sampledDown
+      ? `${comparisonMode ? `Comparing tests ${testLabel}` : `Test ${testLabel}`}. ${comparisonMode ? "Each returned value column is aligned over finite sample index for direct curve comparison." : "Each returned value column is shown as a sampled line over the original sample index."} ${sampledPointCount} points per series were kept for plotting.`
+      : `${comparisonMode ? `Comparing tests ${testLabel}` : `Test ${testLabel}`}. Each returned value column is shown as a separate line over sample index.`;
 
   return [
     {
       type: "stats",
-      title: "Value column plot summary",
+      title: statsTitle,
       data: [
         { label: "Signal", value: signalLabel, delta: "connected" },
         { label: "Points", value: String(longestSeries), delta: "total samples" },
@@ -234,13 +281,8 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
     },
     {
       type: "chart",
-      title: "Test value columns",
-      subtitle:
-        hiddenSeriesCount > 0
-          ? `Test ${testId}. Showing the first ${visibleColumns.length} of ${plottedColumns.length} returned value columns to keep the chart readable. ${sampledPointCount} points per visible series were kept for plotting.`
-          : sampledDown
-            ? `Test ${testId}. Each returned value column is shown as a sampled line over the original sample index. ${sampledPointCount} points per series were kept for plotting.`
-            : `Test ${testId}. Each returned value column is shown as a separate line over sample index.`,
+      title: chartTitle,
+      subtitle: chartSubtitle,
       data: {
         kind: "line",
         xKey: "index",

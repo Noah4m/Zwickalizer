@@ -231,6 +231,23 @@ def summarize_value_columns_tool(
     series_summaries: list[dict[str, Any]] = []
     client_value_columns: list[dict[str, Any]] = []
     has_sampled_values = False
+    comparison_test_ids = parsed_result.get("testIds")
+    distinct_test_ids = [
+        test_id
+        for test_id in (
+            comparison_test_ids
+            if isinstance(comparison_test_ids, list)
+            else list(
+                {
+                    column.get("testId")
+                    for column in raw_value_columns
+                    if isinstance(column, dict) and isinstance(column.get("testId"), str)
+                }
+            )
+        )
+        if isinstance(test_id, str) and test_id
+    ]
+    comparison_mode = len(distinct_test_ids) > 1
 
     for index, raw_column in enumerate(raw_value_columns):
         column = raw_column if isinstance(raw_column, dict) else {}
@@ -249,6 +266,9 @@ def summarize_value_columns_tool(
             label = name.strip()
         else:
             label = f"Value column {index + 1}"
+
+        if comparison_mode and isinstance(column.get("testId"), str) and column.get("testId"):
+            label = f"{label} ({column['testId']})"
 
         if (
             column.get("duplicate")
@@ -291,14 +311,24 @@ def summarize_value_columns_tool(
     strict = bool(parsed_result.get("strict", arguments.get("strict", True)))
     include_values = True
     values_limit = parsed_result.get("valuesLimit", arguments.get("values_limit"))
+    value_column_index = parsed_result.get(
+        "valueColumnIndex", arguments.get("value_column_index")
+    )
     test_id = parsed_result.get("testId") or arguments.get("test_id")
+    if not distinct_test_ids and isinstance(test_id, str) and test_id:
+        distinct_test_ids = [test_id]
 
     summarized_result = {
         "testId": test_id,
+        "testIds": distinct_test_ids,
+        "comparisonMode": comparison_mode,
         "strict": strict,
         "includeValues": include_values,
         "count": parsed_result.get("count", len(client_value_columns)),
         "valuesLimit": values_limit,
+        "valueColumnIndex": (
+            value_column_index if isinstance(value_column_index, int) else None
+        ),
         "plotShownToUser": True,
         "sampling": {
             "maxPoints": MAX_PLOT_POINTS,
@@ -343,7 +373,7 @@ def summarize_value_columns_tool(
 def execute_tool_for_chat(
     name: str, arguments: dict[str, Any], result: str
 ) -> ToolExecutionResult:
-    if name == "db_get_test_value_columns":
+    if name in {"db_get_test_value_columns", "db_compare_two_tests"}:
         return summarize_value_columns_tool(arguments, result)
     payload = tool_result_payload(result)
     return ToolExecutionResult(

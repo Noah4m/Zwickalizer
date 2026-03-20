@@ -256,7 +256,7 @@ async def list_tools() -> list[types.Tool]:
                     },
                     "testType": {
                         "type": "string",
-                        "description": "Filter by test type, e.g. 'Tensile test'. Exact match on TYPE_OF_TESTING_STR.",
+                        "description": "Filter by test type, e.g. 'tensile'. Exact match on TYPE_OF_TESTING_STR.",
                     },
                     "customer": {
                         "type": "string",

@@ -175,12 +175,12 @@ function TableSection({ title, table }: { title: string; table: AnalysisTableDat
       <div className="border-b border-border/60 px-5 py-4">
         <h3 className="font-mono text-xs uppercase tracking-widest text-muted-foreground">{title}</h3>
       </div>
-      <div className="overflow-x-auto">
+      <div className="overflow-auto max-h-64">
         <table className="w-full text-sm">
-          <thead>
+          <thead className="sticky top-0 z-10">
             <tr className="border-b border-border/60 bg-secondary/50">
               {table.columns.map((column) => (
-                <th key={column} className="px-4 py-3 text-left font-mono text-xs uppercase tracking-wider text-muted-foreground">
+                <th key={column} className="px-4 py-3 text-left font-mono text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">
                   {column}
                 </th>
               ))}
@@ -189,11 +189,28 @@ function TableSection({ title, table }: { title: string; table: AnalysisTableDat
           <tbody>
             {table.rows.map((row, index) => (
               <tr key={index} className="border-b border-border/50 last:border-b-0">
-                {table.columns.map((column) => (
-                  <td key={column} className="px-4 py-3 text-foreground">
-                    {String(row[column] ?? "—")}
-                  </td>
-                ))}
+                {table.columns.map((column) => {
+                  const value = String(row[column] ?? "—");
+                  const isBadgeColumn = column === "availableColumns";
+                  return (
+                    <td key={column} className="px-4 py-3 text-foreground align-top">
+                      {isBadgeColumn ? (
+                        <div className="flex flex-wrap gap-1">
+                          {value.split(" | ").filter(Boolean).map((tag) => (
+                            <span
+                              key={tag}
+                              className="inline-block rounded-full border border-border/60 bg-secondary/60 px-2 py-0.5 font-mono text-xs text-muted-foreground"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        value
+                      )}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
@@ -202,6 +219,7 @@ function TableSection({ title, table }: { title: string; table: AnalysisTableDat
     </section>
   );
 }
+
 
 export default function AnalysisVault({ data }: AnalysisVaultProps) {
   return (

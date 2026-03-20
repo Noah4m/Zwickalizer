@@ -22,11 +22,14 @@ The server communicates over stdio — connect it from your MCP client config:
 
 import os
 import json
+from pathlib import Path
 import asyncio
 from datetime import datetime, timedelta, timezone
 
 from pymongo import MongoClient
 from pymongo.collection import Collection
+from bson import ObjectId
+import logging
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -163,6 +166,7 @@ def collect_property_values(test_ids: list[str], column_name: str) -> list[dict]
 
 # Minimal projection — always exclude raw value arrays unless requested
 META_PROJ = {
+    "_id": 1,
     "name": 1,
     "TestParametersFlat": 1,
     "valueColumns._id": 1,
@@ -172,27 +176,34 @@ META_PROJ = {
 }
 
 
+# Fixed fields to always show first
+_FIXED_KEYS = ["testId", "name", "date"]
+
+# Keys to always exclude from output
+_EXCLUDED_KEYS = {"date", "Date", "Date/Clock time", "Clock time"}
+
+
 def format_test(d: dict) -> dict:
     fp = d.get("TestParametersFlat", {})
-    return {
-        "testId": str(d["_id"]),
+
+    result: dict = {
+        "testId": str(d["_id"]).strip("{}"),
         "name": d.get("name"),
-        "date": fp.get("date").isoformat() if fp.get("date") else None,
-        "material": fp.get("MATERIAL"),
-        "testType": fp.get("TYPE_OF_TESTING_STR"),
-        "machine": fp.get("MACHINE_DATA"),
-        "tester": fp.get("TESTER"),
-        "customer": fp.get("CUSTOMER"),
-        "standard": fp.get("STANDARD"),
-        "specimenWidth": fp.get("SPECIMEN_WIDTH"),
-        "diameter": fp.get("DIAMETER"),
-        "machine_type_str": fp.get("MACHINE_TYPE_STR"),
-        "notes": fp.get("NOTES"),
-        "testSpeed": fp.get("TEST_SPEED"),
-        "availableColumns": [
-            c["name"] for c in d.get("valueColumns", []) if "name" in c
-        ],
+        "date": fp.get("Date") or fp.get("date"),
     }
+    if result["date"] and hasattr(result["date"], "isoformat"):
+        result["date"] = result["date"].isoformat()
+
+    # Add all remaining TestParametersFlat fields dynamically
+    for key, value in fp.items():
+        if key not in _EXCLUDED_KEYS and value is not None:
+            result[key] = value
+
+    result["availableColumns"] = [
+        c["name"] for c in d.get("valueColumns", []) if "name" in c
+    ]
+
+    return result
 
 
 def ok(data: dict) -> list[types.TextContent]:
@@ -234,9 +245,9 @@ async def list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "id": {
+                    "_id": {
                         "type": "string",
-                        "description": "Exact match on the test _id, e.g. '641a7c8f9f1b2c3d4e5f6789'. Use this to look up a single known test directly.",
+                        "description": 'Exact match on the test _id, e.g. "{641a7c8f9f1b2c3d4e5f6789}". Id\'s should have curly brackets. Use this to look up a single known test directly.',
                     },
                     "testType": {
                         "type": "string",
@@ -378,14 +389,12 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     if name == "find_tests":
         filters = {}
 
-        if "id" in arguments:
-
-            try:
-                filters["_id"] = ObjectId(arguments["id"])
-            except Exception:
-                return ok(
-                    {"error": f"Invalid test id format: {arguments['id']}", "tests": []}
-                )
+        if "_id" in arguments:
+            raw_id = arguments["_id"].strip()
+            # Ensure it has the curly brace wrapper that matches the stored format
+            if not raw_id.startswith("{"):
+                raw_id = f"{{{raw_id}}}"
+            filters["_id"] = raw_id
 
         if "testType" in arguments:
             filters["TestParametersFlat.TYPE_OF_TESTING_STR"] = arguments["testType"]

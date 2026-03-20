@@ -215,7 +215,9 @@ def _series_statistics(values: list[float | None]) -> dict[str, float | None]:
     }
 
 
-def summarize_value_arrays_tool(arguments: dict[str, Any], result: str) -> ToolExecutionResult:
+def summarize_value_arrays_tool(
+    arguments: dict[str, Any], result: str
+) -> ToolExecutionResult:
     payload = tool_result_payload(result)
     parsed_result = payload.get("result")
     if not isinstance(parsed_result, dict):
@@ -239,8 +241,12 @@ def summarize_value_arrays_tool(arguments: dict[str, Any], result: str) -> ToolE
             {
                 "label": label,
                 "points": len(values),
-                "finitePoints": len([value for value in plotted_values if value is not None]),
-                "missingPoints": len([value for value in plotted_values if value is None]),
+                "finitePoints": len(
+                    [value for value in plotted_values if value is not None]
+                ),
+                "missingPoints": len(
+                    [value for value in plotted_values if value is None]
+                ),
                 **series_stats,
                 "sampledPoints": sampled_series["sampledPoints"],
                 "sampledDown": sampled_series["sampledDown"],
@@ -297,7 +303,9 @@ def summarize_value_arrays_tool(arguments: dict[str, Any], result: str) -> ToolE
     )
 
 
-def summarize_value_columns_tool(arguments: dict[str, Any], result: str) -> ToolExecutionResult:
+def summarize_value_columns_tool(
+    arguments: dict[str, Any], result: str
+) -> ToolExecutionResult:
     payload = tool_result_payload(result)
     parsed_result = payload.get("result")
     if not isinstance(parsed_result, dict):
@@ -329,7 +337,11 @@ def summarize_value_columns_tool(arguments: dict[str, Any], result: str) -> Tool
         else:
             label = f"Value column {index + 1}"
 
-        if column.get("duplicate") and isinstance(source_document_id, str) and source_document_id:
+        if (
+            column.get("duplicate")
+            and isinstance(source_document_id, str)
+            and source_document_id
+        ):
             label = f"{label} ({source_document_id})"
 
         series_summaries.append(
@@ -339,8 +351,12 @@ def summarize_value_columns_tool(arguments: dict[str, Any], result: str) -> Tool
                 "childId": column.get("childId"),
                 "sourceDocumentId": source_document_id,
                 "points": len(values),
-                "finitePoints": len([value for value in plotted_values if value is not None]),
-                "missingPoints": len([value for value in plotted_values if value is None]),
+                "finitePoints": len(
+                    [value for value in plotted_values if value is not None]
+                ),
+                "missingPoints": len(
+                    [value for value in plotted_values if value is None]
+                ),
                 **series_stats,
                 "sampledPoints": sampled_series["sampledPoints"],
                 "sampledDown": sampled_series["sampledDown"],
@@ -360,7 +376,9 @@ def summarize_value_columns_tool(arguments: dict[str, Any], result: str) -> Tool
         return ToolExecutionResult(model_payload=payload, client_result=parsed_result)
 
     strict = bool(parsed_result.get("strict", arguments.get("strict", True)))
-    include_values = bool(parsed_result.get("includeValues", arguments.get("include_values", False)))
+    include_values = bool(
+        parsed_result.get("includeValues", arguments.get("include_values", False))
+    )
     values_limit = parsed_result.get("valuesLimit", arguments.get("values_limit"))
     test_id = parsed_result.get("testId") or arguments.get("test_id")
 
@@ -411,7 +429,9 @@ def summarize_value_columns_tool(arguments: dict[str, Any], result: str) -> Tool
     )
 
 
-def execute_tool_for_chat(name: str, arguments: dict[str, Any], result: str) -> ToolExecutionResult:
+def execute_tool_for_chat(
+    name: str, arguments: dict[str, Any], result: str
+) -> ToolExecutionResult:
     if name == "db_get_test_value_arrays":
         return summarize_value_arrays_tool(arguments, result)
     if name == "db_get_test_value_columns":
@@ -437,7 +457,9 @@ class MCPEnabledChatAgent:
         self.mcp_server_root = mcp_server_root
         self.toolbox_factory = toolbox_factory
 
-    def _completion(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None):
+    def _completion(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None
+    ):
         request: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -447,7 +469,9 @@ class MCPEnabledChatAgent:
             request["tools"] = tools
         return self.client.chat.completions.create(**request)
 
-    def respond(self, message: str, role: str | None, history: list[dict]) -> ChatAgentResponse:
+    def respond(
+        self, message: str, role: str | None, history: list[dict]
+    ) -> ChatAgentResponse:
         conversation_history = history_messages(history)
         base_messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT.strip()},
@@ -491,7 +515,8 @@ class MCPEnabledChatAgent:
 
                 if not tool_calls:
                     return ChatAgentResponse(
-                        answer=extract_text(response) or "I could not generate a response.",
+                        answer=extract_text(response)
+                        or "I could not generate a response.",
                         tool_calls=tool_calls_for_client,
                         analysis=analysis_for_client,
                     )
@@ -499,12 +524,21 @@ class MCPEnabledChatAgent:
                 for tool_call in tool_calls:
                     function = getattr(tool_call, "function", None)
                     name = getattr(function, "name", "")
-                    arguments = function_call_arguments(getattr(function, "arguments", None))
-                    logger.info("Model requested MCP tool '%s' with arguments: %s", name, json.dumps(arguments, default=str))
+                    arguments = function_call_arguments(
+                        getattr(function, "arguments", None)
+                    )
+                    logger.info(
+                        "Model requested MCP tool '%s' with arguments: %s",
+                        name,
+                        json.dumps(arguments, default=str),
+                    )
                     try:
                         result = toolbox.call(name, arguments)
                         execution = execute_tool_for_chat(name, arguments, result)
-                        response_payload = json.dumps(sanitize_json_value(execution.model_payload), allow_nan=False)
+                        response_payload = json.dumps(
+                            sanitize_json_value(execution.model_payload),
+                            allow_nan=False,
+                        )
                         tool_calls_for_client.append(
                             {
                                 "name": name,
@@ -514,7 +548,9 @@ class MCPEnabledChatAgent:
                         )
                         analysis_for_client.extend(execution.analysis)
                     except Exception as exc:
-                        logger.exception("MCP tool '%s' failed during chat answer", name)
+                        logger.exception(
+                            "MCP tool '%s' failed during chat answer", name
+                        )
                         response_payload = json.dumps({"error": str(exc)})
                         tool_calls_for_client.append(
                             {
@@ -533,10 +569,12 @@ class MCPEnabledChatAgent:
                     )
 
                 final_response = self._completion(
-                    messages + [{"role": "system", "content": FINAL_ANSWER_PROMPT.strip()}]
+                    messages
+                    + [{"role": "system", "content": FINAL_ANSWER_PROMPT.strip()}]
                 )
                 return ChatAgentResponse(
-                    answer=extract_text(final_response) or "I could not generate a response.",
+                    answer=extract_text(final_response)
+                    or "I could not generate a response.",
                     tool_calls=tool_calls_for_client,
                     analysis=analysis_for_client,
                 )
@@ -546,7 +584,9 @@ class MCPEnabledChatAgent:
             logger.exception("Falling back after MCP or agent failure")
             try:
                 response = self._completion(fallback_messages)
-                return ChatAgentResponse(answer=extract_text(response) or "I could not generate a response.")
+                return ChatAgentResponse(
+                    answer=extract_text(response) or "I could not generate a response."
+                )
             except openai.APIError as exc:
                 return ChatAgentResponse(answer=format_model_error(exc))
 

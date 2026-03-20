@@ -362,11 +362,104 @@ function buildValueColumnsAnalysis(message: ChatMessage): AnalysisData[] | null 
   ];
 }
 
+function buildFindTestsAnalysis(message: ChatMessage): AnalysisData[] | null {
+  const toolCall = [...(message.toolCalls ?? [])]
+    .reverse()
+    .find((entry) => entry.name === "db_find_tests");
+
+  if (!toolCall || typeof toolCall.result !== "object" || toolCall.result === null) {
+    return null;
+  }
+
+  const result = toolCall.result as Record<string, unknown>;
+  const tests = result.tests;
+  if (!Array.isArray(tests) || tests.length === 0) {
+    return null;
+  }
+
+  // Fixed fields that always appear first if present
+  const fixedFirst = ["name", "testId", "date"];
+  // Fields to exclude from the metadata table
+  const excluded = new Set(["availableColumns"]);
+
+  // Collect all keys across all tests dynamically
+  const allKeys = new Set<string>();
+  tests.forEach((test) => {
+    Object.keys(test as Record<string, unknown>).forEach((k) => allKeys.add(k));
+  });
+
+  // Build ordered column list: fixed first, then the rest alphabetically
+  const metaColumns = [
+    ...fixedFirst.filter((k) => allKeys.has(k)),
+    ...[...allKeys]
+      .filter((k) => !fixedFirst.includes(k) && !excluded.has(k))
+      .sort(),
+  ];
+
+  // Only keep columns that have at least one non-null value
+  const activeMetaColumns = metaColumns.filter((col) =>
+    tests.some((test) => {
+      const val = (test as Record<string, unknown>)[col];
+      return val !== null && val !== undefined && val !== "";
+    }),
+  );
+
+  const metaRows = tests.map((test) => {
+    const t = test as Record<string, unknown>;
+    const row: Record<string, string> = {};
+    activeMetaColumns.forEach((col) => {
+      const val = t[col];
+      row[col] = val !== null && val !== undefined ? String(val) : "—";
+    });
+    return row;
+  });
+
+  // Available columns as separate table with badges
+  const columnRows = tests.map((test) => {
+    const t = test as Record<string, unknown>;
+    const cols = Array.isArray(t.availableColumns)
+      ? [...new Set(t.availableColumns as string[])].filter(Boolean)
+      : [];
+    return {
+      name: typeof t.name === "string" && t.name
+        ? t.name
+        : typeof t.testId === "string"
+        ? t.testId
+        : "—",
+      availableColumns: cols.join(" | "),
+    };
+  });
+
+  return [
+    {
+      type: "table",
+      title: "Test metadata",
+      data: {
+        columns: activeMetaColumns,
+        rows: metaRows,
+      },
+    },
+    {
+      type: "table",
+      title: "Available columns",
+      data: {
+        columns: ["name", "availableColumns"],
+        rows: columnRows,
+      },
+    },
+  ];
+}
+
 export function deriveAnalysisData(messages: ChatMessage[]): AnalysisData[] {
   const latestAssistantMessage = [...messages].reverse().find((message) => message.role === "assistant");
 
   if (!latestAssistantMessage) {
     return [];
+  }
+
+  const findTestsAnalysis = buildFindTestsAnalysis(latestAssistantMessage);
+  if (findTestsAnalysis) {
+    return findTestsAnalysis;
   }
 
   const toolDerivedValueColumnsAnalysis = buildValueColumnsAnalysis(latestAssistantMessage);

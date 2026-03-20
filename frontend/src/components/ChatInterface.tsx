@@ -45,6 +45,18 @@ export default function ChatInterface() {
   const hasResponse = messages.some((message) => message.role === "assistant");
   const analysisData = useMemo(() => deriveAnalysisData(messages), [messages]);
 
+  const currentTestId = useMemo(() => {
+    const latestAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+    const toolCall = [...(latestAssistant?.toolCalls ?? [])]
+      .reverse()
+      .find((t) => t.name === "db_find_tests");
+    const tests = (toolCall?.result as Record<string, unknown>)?.tests;
+    if (Array.isArray(tests) && tests.length > 0) {
+      return String((tests[0] as Record<string, unknown>).testId ?? "");
+    }
+    return undefined;
+  }, [messages]);
+
   const patchThread = (threadId: string, updater: (thread: ChatThread) => ChatThread) => {
     setThreads((currentThreads) =>
       sortThreads(
@@ -73,24 +85,10 @@ export default function ChatInterface() {
     setInput("");
   };
 
-  const send = async () => {
-    const text = input.trim();
-    if (!text || loading || !activeThread) return;
+  const sendMessage = async (text: string, history: ChatMessage[]) => {
+    if (!activeThread) return;
 
-    const userMsg: ChatMessage = { role: "user", content: text, timestamp: new Date() };
-    const history = activeThread.messages;
-
-    patchThread(activeThread.id, (thread) => ({
-      ...thread,
-      title: thread.messages.length === 0 ? getThreadTitle(text) : thread.title,
-      role,
-      messages: [...thread.messages, userMsg],
-      updatedAt: Date.now(),
-    }));
-
-    setInput("");
     setLoading(true);
-
     try {
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), CHAT_REQUEST_TIMEOUT_MS);
@@ -101,7 +99,7 @@ export default function ChatInterface() {
         body: JSON.stringify({
           message: text,
           role,
-          history: history.map((message) => ({ role: message.role, content: message.content })),
+          history: history.map((m) => ({ role: m.role, content: m.content })),
         }),
       });
       window.clearTimeout(timeoutId);
@@ -118,26 +116,30 @@ export default function ChatInterface() {
             role: "assistant",
             content: data.answer,
             toolCalls: data.tool_calls || [],
-            analysis: Array.isArray(data.analysis) && data.analysis.length > 0 ? data.analysis : undefined,
+            analysis:
+              Array.isArray(data.analysis) && data.analysis.length > 0
+                ? data.analysis
+                : undefined,
             timestamp: new Date(),
           },
         ],
         updatedAt: Date.now(),
       }));
     } catch (error) {
-      const message =
+      const errorMessage =
         error instanceof DOMException && error.name === "AbortError"
           ? `Request timed out after ${CHAT_REQUEST_TIMEOUT_MS / 1000} seconds. Check \`docker compose logs -f frontend backend agent\`.`
           : error instanceof Error
             ? error.message
             : "Unknown error";
+
       patchThread(activeThread.id, (thread) => ({
         ...thread,
         messages: [
           ...thread.messages,
           {
             role: "assistant",
-            content: `⚠ Error: ${message}`,
+            content: `⚠ Error: ${errorMessage}`,
             toolCalls: [],
             analysis: undefined,
             timestamp: new Date(),
@@ -149,6 +151,40 @@ export default function ChatInterface() {
       setLoading(false);
       requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }));
     }
+  };
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || loading || !activeThread) return;
+
+    const userMsg: ChatMessage = { role: "user", content: text, timestamp: new Date() };
+    const history = activeThread.messages;
+
+    patchThread(activeThread.id, (thread) => ({
+      ...thread,
+      title: thread.messages.length === 0 ? getThreadTitle(text) : thread.title,
+      role,
+      messages: [...thread.messages, userMsg],
+      updatedAt: Date.now(),
+    }));
+
+    setInput("");
+    await sendMessage(text, history);
+  };
+
+  const handleSendPrompt = async (message: string) => {
+    if (loading || !activeThread) return;
+
+    const userMsg: ChatMessage = { role: "user", content: message, timestamp: new Date() };
+    const history = activeThread.messages;
+
+    patchThread(activeThread.id, (thread) => ({
+      ...thread,
+      messages: [...thread.messages, userMsg],
+      updatedAt: Date.now(),
+    }));
+
+    await sendMessage(message, history);
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -254,7 +290,11 @@ export default function ChatInterface() {
                     transition={{ duration: 0.45, ease: [0.4, 0, 0.2, 1] }}
                     className="hidden min-h-0 min-w-0 border-l border-border/60 bg-background/35 md:block md:w-[56%]"
                   >
-                    <AnalysisVault data={analysisData} />
+                    <AnalysisVault
+                      data={analysisData}
+                      currentTestId={currentTestId}
+                      onSendPrompt={handleSendPrompt}
+                    />
                   </motion.div>
                 )}
               </AnimatePresence>

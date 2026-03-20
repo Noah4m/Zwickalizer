@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertTriangle, MessageSquareText, Sparkles, Users } from "lucide-react";
+import { AlertTriangle, MessageSquareText } from "lucide-react";
+import BrandMark from "@/components/BrandMark";
 import RoleToggle, { type UserRole } from "@/components/RoleToggle";
 import MessageBubble from "@/components/MessageBubble";
 import AnalysisVault from "@/components/AnalysisVault";
@@ -30,7 +31,7 @@ export default function ChatInterface() {
   const [activeThreadId, setActiveThreadId] = useState(initialThread.id);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [role, setRole] = useState<UserRole>("engineer");
+  const role: UserRole = "engineer";
   const [activeWorkspace, setActiveWorkspace] = useState<"chat" | "outliers">("chat");
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -52,17 +53,6 @@ export default function ChatInterface() {
     );
   };
 
-  const handleRoleChange = (nextRole: UserRole) => {
-    setRole(nextRole);
-    if (!activeThread) return;
-
-    patchThread(activeThread.id, (thread) => ({
-      ...thread,
-      role: nextRole,
-      updatedAt: Date.now(),
-    }));
-  };
-
   const handleNewThread = () => {
     if (loading) return;
 
@@ -80,7 +70,6 @@ export default function ChatInterface() {
     if (!thread) return;
 
     setActiveThreadId(threadId);
-    setRole(thread.role);
     setInput("");
   };
 
@@ -190,19 +179,23 @@ export default function ChatInterface() {
                   <AlertTriangle className="h-4 w-4" />
                 </div>
               )}
-              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/12 text-primary shadow-[var(--shadow-soft)]">
-                {activeWorkspace === "chat" ? <Users className="h-5 w-5" /> : <AlertTriangle className="h-5 w-5" />}
-              </div>
-              <div>
-                <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
-                  {activeWorkspace === "chat" ? "Materials Chat" : "Outlier Review"}
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {activeWorkspace === "chat"
-                    ? "Ask a colleague-style assistant about test results and trends."
-                    : "Step through suspicious tests, inspect context, and decide what to do next."}
-                </p>
-              </div>
+              {activeWorkspace === "chat" ? (
+                <BrandMark compact />
+              ) : (
+                <>
+                  <div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/12 text-primary shadow-[var(--shadow-soft)]">
+                    <AlertTriangle className="h-5 w-5" />
+                  </div>
+                  <div>
+                  <p className="font-mono text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
+                    Outlier Review
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Step through suspicious tests, inspect context, and decide what to do next.
+                  </p>
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="flex items-center gap-3">
@@ -218,11 +211,7 @@ export default function ChatInterface() {
                   </TabsTrigger>
                 </TabsList>
               </Tabs>
-              <div className="hidden items-center gap-2 rounded-full border border-border/60 bg-background/55 px-3 py-2 text-xs text-muted-foreground md:flex">
-                <Sparkles className="h-3.5 w-3.5 text-primary" />
-                {activeWorkspace === "chat" ? "Regenerated outputs for each thread" : "Mock triage flow for engineer review"}
-              </div>
-              <RoleToggle role={role} onRoleChange={handleRoleChange} />
+              <RoleToggle />
             </div>
           </header>
 

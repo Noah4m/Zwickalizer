@@ -169,59 +169,86 @@ function ChartSection({ title, subtitle, chart }: { title: string; subtitle?: st
   );
 }
 
-function TableSection({ title, table }: { title: string; table: AnalysisTableData }) {
-  return (
-    <section className="overflow-hidden rounded-[28px] border border-border/60 bg-card/70 shadow-[var(--shadow-soft)] backdrop-blur-xl">
-      <div className="border-b border-border/60 px-5 py-4">
-        <h3 className="font-mono text-xs uppercase tracking-widest text-muted-foreground">{title}</h3>
-      </div>
-      <div className="overflow-auto max-h-64">
-        <table className="w-full text-sm">
-          <thead className="sticky top-0 z-10">
-            <tr className="border-b border-border/60 bg-secondary/50">
-              {table.columns.map((column) => (
-                <th key={column} className="px-4 py-3 text-left font-mono text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">
-                  {column}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {table.rows.map((row, index) => (
-              <tr key={index} className="border-b border-border/50 last:border-b-0">
-                {table.columns.map((column) => {
-                  const value = String(row[column] ?? "—");
-                  const isBadgeColumn = column === "availableColumns";
-                  return (
-                    <td key={column} className="px-4 py-3 text-foreground align-top">
-                      {isBadgeColumn ? (
-                        <div className="flex flex-wrap gap-1">
-                          {value.split(" | ").filter(Boolean).map((tag) => (
-                            <span
-                              key={tag}
-                              className="inline-block rounded-full border border-border/60 bg-secondary/60 px-2 py-0.5 font-mono text-xs text-muted-foreground"
-                            >
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        value
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
+interface AnalysisVaultProps {
+  data: AnalysisData[];
+  onSendPrompt?: (message: string) => void;
+  currentTestId?: string;
 }
 
 
-export default function AnalysisVault({ data }: AnalysisVaultProps) {
+
+function TableSection({
+    title,
+    table,
+    onSendPrompt,
+    currentTestId,
+  }: {
+    title: string;
+    table: AnalysisTableData;
+    onSendPrompt?: (message: string) => void;
+    currentTestId?: string;
+  }) {
+    return (
+      <section className="overflow-hidden rounded-[28px] border border-border/60 bg-card/70 shadow-[var(--shadow-soft)] backdrop-blur-xl">
+        <div className="border-b border-border/60 px-5 py-4">
+          <h3 className="font-mono text-xs uppercase tracking-widest text-muted-foreground">{title}</h3>
+        </div>
+        <div className="overflow-auto max-h-64">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 z-10">
+              <tr className="border-b border-border/60 bg-secondary/50">
+                {table.columns.map((column) => (
+                  <th key={column} className="px-4 py-3 text-left font-mono text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                    {column}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {table.rows.map((row, index) => (
+                <tr key={index} className="border-b border-border/50 last:border-b-0">
+                  {table.columns.map((column) => {
+                    const value = String(row[column] ?? "—");
+                    const isBadgeColumn = column === "availableColumns";
+                    const rowTestId = String(row["name"] ?? "");
+                    return (
+                      <td key={column} className="px-4 py-3 text-foreground align-top">
+                        {isBadgeColumn ? (
+                          <div className="flex flex-wrap gap-1">
+                            {value.split(" | ").filter(Boolean).map((tag) => (
+                              <button
+                                key={tag}
+                                onClick={() =>
+                                  onSendPrompt?.(
+                                    currentTestId
+                                      ? `Please plot the "${tag}" signal from test {${currentTestId}}.`
+                                      : `Please plot the "${tag}" signal from the current test.`
+                                  )
+                                }
+                                className="inline-block rounded-full border border-border/60 bg-secondary/60 px-2 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:border-primary/60 hover:bg-primary/10 hover:text-primary cursor-pointer"
+                              >
+                                {tag}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          value
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    );
+  }
+
+
+
+export default function AnalysisVault({ data, onSendPrompt, currentTestId }: AnalysisVaultProps) {
   return (
     <motion.div
       initial={{ opacity: 0, x: 40 }}
@@ -250,7 +277,7 @@ export default function AnalysisVault({ data }: AnalysisVaultProps) {
             return <ChartSection key={`${section.title}-${index}`} title={section.title} subtitle={section.subtitle} chart={section.data as AnalysisChartData} />;
           }
 
-          return <TableSection key={`${section.title}-${index}`} title={section.title} table={section.data as AnalysisTableData} />;
+          return <TableSection key={`${section.title}-${index}`} title={section.title} table={section.data as AnalysisTableData} onSendPrompt={onSendPrompt}currentTestId={currentTestId} />;
         })
       )}
     </motion.div>

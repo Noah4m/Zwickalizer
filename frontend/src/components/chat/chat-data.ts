@@ -293,7 +293,9 @@ function buildFindTestsAnalysis(message: ChatMessage): AnalysisData[] | null {
   const activeMetaColumns = metaColumns.filter((col) =>
     tests.some((test) => {
       const val = (test as Record<string, unknown>)[col];
-      return val !== null && val !== undefined && val !== "";
+      if (val === null || val === undefined || val === "") return false;
+      const str = String(val);
+      return str !== "—" && str !== "[object Object]";
     }),
   );
 

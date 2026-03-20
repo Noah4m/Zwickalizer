@@ -172,7 +172,6 @@ def collect_property_values(test_ids: list[str], column_name: str) -> list[dict]
 
 # Minimal projection — always exclude raw value arrays unless requested
 META_PROJ = {
-    "_id": 1,
     "name": 1,
     "TestParametersFlat": 1,
     "valueColumns._id": 1,
@@ -182,11 +181,8 @@ META_PROJ = {
 }
 
 
-# Fixed fields to always show first
-_FIXED_KEYS = ["testId", "name", "date"]
-
-# Keys to always exclude from output
 _EXCLUDED_KEYS = {"date", "Date", "Date/Clock time", "Clock time"}
+_PRIMITIVE_TYPES = (str, int, float, bool)
 
 
 def format_test(d: dict) -> dict:
@@ -200,9 +196,12 @@ def format_test(d: dict) -> dict:
     if result["date"] and hasattr(result["date"], "isoformat"):
         result["date"] = result["date"].isoformat()
 
-    # Add all remaining TestParametersFlat fields dynamically
     for key, value in fp.items():
-        if key not in _EXCLUDED_KEYS and value is not None:
+        if (
+            key not in _EXCLUDED_KEYS
+            and value is not None
+            and isinstance(value, _PRIMITIVE_TYPES)
+        ):
             result[key] = value
 
     result["availableColumns"] = [
@@ -357,14 +356,14 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return ok({"customers": vals})
 
     if name == "find_tests":
-        filters = {}
+        filters = []
 
         if "_id" in arguments:
             raw_id = arguments["_id"].strip()
             # Ensure it has the curly brace wrapper that matches the stored format
             if not raw_id.startswith("{"):
                 raw_id = f"{{{raw_id}}}"
-            filters["_id"] = raw_id
+            filters.append({"_id": raw_id})
 
         if "testType" in arguments:
             filters.append(
@@ -406,7 +405,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             .sort("TestParametersFlat.date", -1)
             .limit(limit)
         )
-        results = [normalize_test_document(d) for d in cursor]
+        results = [format_test(d) for d in cursor]
         return ok(
             {
                 "tests": results,

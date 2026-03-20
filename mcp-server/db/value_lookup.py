@@ -233,14 +233,3 @@ def numeric_values(values: list[Any]) -> list[float]:
         for value in values
         if isinstance(value, (int, float)) and not isinstance(value, bool)
     ]
-
-
-def extract_value_arrays(
-    resolved_value_columns: list[dict[str, Any]],
-) -> list[list[Any]]:
-    arrays: list[list[Any]] = []
-    for entry in resolved_value_columns:
-        values = entry.get("values")
-        if isinstance(values, list):
-            arrays.append(values)
-    return arrays

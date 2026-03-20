@@ -34,8 +34,14 @@ import logging
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
+from test_metadata import (
+    FIELD_ALIASES,
+    equality_filter,
+    exact_date_filter,
+    normalize_test_document,
+)
 from value_lookup import (
-    extract_value_arrays,
+    build_test_id_candidates,
     find_test_by_id,
     find_value_column_by_name,
     numeric_values,
@@ -300,69 +306,33 @@ async def list_tools() -> list[types.Tool]:
             description=(
                 "Resolve all stored valuecolumns_migrated entries for a single test id "
                 "by joining metadata.refId and metadata.childId. Returns only _Value columns. "
-                "By default this returns metadata and counts only; raw values are opt-in. "
+                "Raw values are always included so the frontend can plot them. "
                 "Set strict=false to return every valuecolumns_migrated document for the test refId, "
                 "or pass value_column_index to return only the migrated entry mapped from one "
-                "specific test.valueColumns array position."
+                "specific test.valueColumns array position. "
+                "IMPORTANT: `test_id` must include the literal surrounding curly braces, "
+                "for example `{D1CB87C7-D89F-4583-9DA8-5372DC59F25A}`."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "test_id": {
                         "type": "string",
-                        "description": "The _tests._id value for the test to resolve.",
+                        "description": "The exact `_tests._id` value for the test to resolve, including the surrounding curly braces, for example `{D1CB87C7-D89F-4583-9DA8-5372DC59F25A}`.",
                     },
                     "strict": {
                         "type": "boolean",
                         "description": "When true, only return validated _Value matches from test.valueColumns. When false, return all documents with metadata.refId matching the test id.",
                         "default": True,
                     },
-                    "include_values": {
-                        "type": "boolean",
-                        "description": "Set true to include raw values arrays in the response.",
-                        "default": False,
-                    },
                     "values_limit": {
                         "type": "integer",
-                        "description": "Maximum number of values to return per matched column when include_values=true.",
+                        "description": "Maximum number of values to return per matched column.",
                         "minimum": 0,
                     },
                     "value_column_index": {
                         "type": "integer",
                         "description": "Optional zero-based index into test.valueColumns. Example: 0 returns only the migrated entry mapped from test.valueColumns[0].",
-                        "minimum": 0,
-                    },
-                },
-                "required": ["test_id"],
-            },
-        ),
-        types.Tool(
-            name="get_test_value_arrays",
-            description=(
-                "Return the values arrays for a single test id as an array of arrays. "
-                "Use strict=true for validated _Value matches only, or strict=false for all documents with matching metadata.refId. "
-                "Pass value_column_index to return only the array mapped from one specific test.valueColumns entry."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "test_id": {
-                        "type": "string",
-                        "description": "The _tests._id value for the test to resolve.",
-                    },
-                    "strict": {
-                        "type": "boolean",
-                        "description": "When true, only return validated _Value matches from test.valueColumns. When false, return all documents with metadata.refId matching the test id.",
-                        "default": True,
-                    },
-                    "values_limit": {
-                        "type": "integer",
-                        "description": "Maximum number of values to return per matched document.",
-                        "minimum": 0,
-                    },
-                    "value_column_index": {
-                        "type": "integer",
-                        "description": "Optional zero-based index into test.valueColumns. Example: 0 returns only the migrated array mapped from test.valueColumns[0].",
                         "minimum": 0,
                     },
                 },
@@ -397,78 +367,55 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             filters["_id"] = raw_id
 
         if "testType" in arguments:
-            filters["TestParametersFlat.TYPE_OF_TESTING_STR"] = arguments["testType"]
+            filters.append(
+                equality_filter(FIELD_ALIASES["testType"], arguments["testType"])
+            )
         if "customer" in arguments:
-            filters["TestParametersFlat.CUSTOMER"] = arguments["customer"]
+            filters.append(
+                equality_filter(FIELD_ALIASES["customer"], arguments["customer"])
+            )
         if "material" in arguments:
-            filters["TestParametersFlat.MATERIAL"] = arguments["material"]
+            filters.append(
+                equality_filter(FIELD_ALIASES["material"], arguments["material"])
+            )
         if "tester" in arguments:
-            filters["TestParametersFlat.TESTER"] = arguments["tester"]
+            filters.append(
+                equality_filter(FIELD_ALIASES["tester"], arguments["tester"])
+            )
         if "machine_nr" in arguments:
-            filters["TestParametersFlat.MACHINE_DATA"] = arguments["machine_nr"]
-        if "name" in arguments:
-            filters["name"] = arguments["name"]
+            filters.append(
+                equality_filter(FIELD_ALIASES["machineNr"], arguments["machine_nr"])
+            )
+        if isinstance(arguments.get("name"), str) and arguments["name"].strip():
+            filters.append({"name": arguments["name"]})
+        if isinstance(arguments.get("date"), str) and arguments["date"].strip():
+            filters.append(exact_date_filter(arguments["date"]))
+        else:
+            date_filter = build_test_date_filter(
+                arguments.get("date"),
+                arguments.get("date_from"),
+                arguments.get("date_to"),
+            )
+            if date_filter:
+                filters.append({"TestParametersFlat.date": date_filter})
 
-        date_filter = build_test_date_filter(
-            arguments.get("date"),
-            arguments.get("date_from"),
-            arguments.get("date_to"),
-        )
-        if date_filter:
-            filters["TestParametersFlat.date"] = date_filter
-
-        limit = min(int(arguments.get("limit", 10)), 50)
+        limit = max(1, min(int(arguments.get("limit", 10)), 50))
 
         cursor = (
-            tests_col.find(filters, META_PROJ)
+            tests_col.find({"$and": filters} if filters else {}, META_PROJ)
             .sort("TestParametersFlat.date", -1)
             .limit(limit)
         )
-        results = [format_test(d) for d in cursor]
+        results = [normalize_test_document(d) for d in cursor]
         return ok(
             {
                 "tests": results,
                 "count": len(results),
-                "filters_applied": list(filters.keys()),
+                "filters_applied": [list(clause.keys())[0] for clause in filters],
             }
         )
 
     if name == "get_test_value_columns":
-        test_id = arguments["test_id"]
-        strict = bool(arguments.get("strict", True))
-        include_values = bool(arguments.get("include_values", False))
-        values_limit = arguments.get("values_limit")
-        value_column_index = arguments.get("value_column_index")
-        resolved = resolve_test_value_columns(
-            tests_col,
-            values_col,
-            test_id,
-            strict=strict,
-            include_values=include_values,
-            values_limit=values_limit if isinstance(values_limit, int) else None,
-            value_column_index=(
-                value_column_index if isinstance(value_column_index, int) else None
-            ),
-        )
-        if resolved is None:
-            return ok(
-                {"error": f"Test not found for id: {test_id}", "valueColumns": []}
-            )
-        return ok(
-            {
-                "testId": test_id,
-                "count": len(resolved),
-                "strict": strict,
-                "includeValues": include_values,
-                "valuesLimit": values_limit if isinstance(values_limit, int) else None,
-                "valueColumnIndex": (
-                    value_column_index if isinstance(value_column_index, int) else None
-                ),
-                "valueColumns": resolved,
-            }
-        )
-
-    if name == "get_test_value_arrays":
         test_id = arguments["test_id"]
         strict = bool(arguments.get("strict", True))
         values_limit = arguments.get("values_limit")
@@ -485,17 +432,20 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             ),
         )
         if resolved is None:
-            return ok({"error": f"Test not found for id: {test_id}", "valueArrays": []})
+            return ok(
+                {"error": f"Test not found for id: {test_id}", "valueColumns": []}
+            )
         return ok(
             {
                 "testId": test_id,
-                "strict": strict,
                 "count": len(resolved),
+                "strict": strict,
+                "includeValues": True,
                 "valuesLimit": values_limit if isinstance(values_limit, int) else None,
                 "valueColumnIndex": (
                     value_column_index if isinstance(value_column_index, int) else None
                 ),
-                "valueArrays": extract_value_arrays(resolved),
+                "valueColumns": resolved,
             }
         )
 

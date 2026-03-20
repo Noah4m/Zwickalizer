@@ -441,17 +441,6 @@ class ValueLookupTests(unittest.TestCase):
 
         self.assertEqual(resolved, [])
 
-    def test_extract_value_arrays_returns_only_values_lists(self):
-        arrays = value_lookup.extract_value_arrays(
-            [
-                {"values": [1, 2, 3]},
-                {"values": [4]},
-                {"valuesCount": 5},
-            ]
-        )
-
-        self.assertEqual(arrays, [[1, 2, 3], [4]])
-
     def test_find_value_column_by_name_returns_only_value_variant(self):
         test = {
             "_id": "{TEST-3}",

@@ -188,56 +188,6 @@ class ChatAgentTests(unittest.TestCase):
         self.assertEqual(second_request_messages[-1]["role"], "system")
         self.assertIn("Answer the user's latest request now", second_request_messages[-1]["content"])
 
-    def test_value_array_tool_sends_only_summary_to_model_and_plot_to_client(self):
-        final_answer = "I plotted 2 value arrays for the requested test. Result 1 ranges from 0 to 10 and Result 2 ranges from 5 to 15."
-        responses = [
-            FakeResponse(
-                FakeMessage(
-                    "Let me retrieve and plot the stored value arrays.",
-                    tool_calls=[
-                        FakeToolCall(
-                            "call_1",
-                            "db_get_test_value_arrays",
-                            {"test_id": "T-200", "values_limit": 4},
-                        )
-                    ],
-                )
-            ),
-            FakeResponse(FakeMessage(final_answer)),
-        ]
-        client = FakeClient(responses)
-        toolbox = FakeToolbox(
-            json.dumps(
-                {
-                    "testId": "T-200",
-                    "strict": True,
-                    "count": 2,
-                    "valuesLimit": 4,
-                    "valueArrays": [[0, 10, float("nan"), 4], [5, 15, 8, 7]],
-                }
-            ),
-            tool_name="db_get_test_value_arrays",
-            description="Return value arrays for a test.",
-        )
-        agent = MCPEnabledChatAgent(
-            api_key="test-key",
-            model="test-model",
-            mcp_server_root="/tmp/mcp",
-            client=client,
-            toolbox_factory=lambda _: toolbox,
-        )
-
-        response = agent.respond("plot the value arrays for test T-200", "engineer", [])
-
-        self.assertEqual(response.answer, final_answer)
-        self.assertEqual(response.analysis, [])
-        self.assertEqual(response.tool_calls[0]["result"]["plotShownToUser"], True)
-        self.assertEqual(response.tool_calls[0]["result"]["valueArrays"][0]["sampledValues"][2], None)
-        self.assertEqual(response.tool_calls[0]["result"]["valueArrays"][0]["sampledIndices"], [0, 1, 2, 3])
-        self.assertEqual(response.tool_calls[0]["result"]["seriesSummaries"][0]["min"], 0.0)
-        self.assertEqual(response.tool_calls[0]["result"]["seriesSummaries"][1]["max"], 15.0)
-        self.assertEqual(response.tool_calls[0]["result"]["seriesSummaries"][0]["mean"], 4.666666666666667)
-
     def test_value_columns_tool_sends_only_summary_to_model_and_plot_values_to_client(self):
         final_answer = "I plotted the returned force curves. The first series runs from 1 to 4 and the second from 2 to 5."
         responses = [
@@ -248,7 +198,7 @@ class ChatAgentTests(unittest.TestCase):
                         FakeToolCall(
                             "call_1",
                             "db_get_test_value_columns",
-                            {"test_id": "T-300", "include_values": True, "values_limit": 4},
+                            {"test_id": "T-300", "values_limit": 4},
                         )
                     ],
                 )
@@ -314,21 +264,21 @@ class ChatAgentTests(unittest.TestCase):
         tool_message = next(message for message in second_request_messages if message["role"] == "tool")
         self.assertIn('"plotShownToUser": true', tool_message["content"])
         self.assertIn('"seriesSummaries"', tool_message["content"])
-        self.assertNotIn('"valueArrays"', tool_message["content"])
+        self.assertNotIn('"sampledValues"', tool_message["content"])
         self.assertNotIn("NaN", tool_message["content"])
 
-    def test_large_value_array_tool_result_is_sampled_for_client(self):
+    def test_large_value_columns_tool_result_is_sampled_for_client(self):
         large_values = list(range(MAX_PLOT_POINTS + 200))
-        final_answer = "I plotted the sampled value array."
+        final_answer = "I plotted the sampled value column."
         responses = [
             FakeResponse(
                 FakeMessage(
-                    "Let me retrieve the value array.",
+                    "Let me retrieve the value column.",
                     tool_calls=[
                         FakeToolCall(
                             "call_1",
-                            "db_get_test_value_arrays",
-                            {"test_id": "T-400"},
+                            "db_get_test_value_columns",
+                            {"test_id": "T-400", "value_column_index": 0},
                         )
                     ],
                 )
@@ -341,12 +291,20 @@ class ChatAgentTests(unittest.TestCase):
                 {
                     "testId": "T-400",
                     "strict": True,
+                    "includeValues": True,
                     "count": 1,
-                    "valueArrays": [large_values],
+                    "valueColumns": [
+                        {
+                            "name": "Force",
+                            "childId": "{TABLE}.{COL-1}_Value",
+                            "sourceDocumentId": "doc-1",
+                            "values": large_values,
+                        }
+                    ],
                 }
             ),
-            tool_name="db_get_test_value_arrays",
-            description="Return value arrays for a test.",
+            tool_name="db_get_test_value_columns",
+            description="Return value columns for a test.",
         )
         agent = MCPEnabledChatAgent(
             api_key="test-key",
@@ -356,9 +314,9 @@ class ChatAgentTests(unittest.TestCase):
             toolbox_factory=lambda _: toolbox,
         )
 
-        response = agent.respond("plot the value array for test T-400", "engineer", [])
+        response = agent.respond("plot the first value column for test T-400", "engineer", [])
 
-        series = response.tool_calls[0]["result"]["valueArrays"][0]
+        series = response.tool_calls[0]["result"]["valueColumns"][0]
         summary = response.tool_calls[0]["result"]["seriesSummaries"][0]
 
         self.assertEqual(response.answer, final_answer)
